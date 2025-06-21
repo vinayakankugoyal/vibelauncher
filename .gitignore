@@ -1,3 +1,9 @@
+
+#built application files
+*.apk
+*.ap_
+*.aab
+
 *.iml
 .gradle
 /local.properties
