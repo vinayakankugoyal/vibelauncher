@@ -36,6 +36,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.abs
@@ -54,6 +56,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableFloatStateOf
@@ -115,6 +118,12 @@ class AppLauncherViewModel : ViewModel() {
     private val _downSwipeApp = MutableStateFlow<AppInfo?>(null)
     val downSwipeApp: StateFlow<AppInfo?> = _downSwipeApp.asStateFlow()
     
+    private val _autoLaunchApp = MutableStateFlow<AppInfo?>(null)
+    val autoLaunchApp: StateFlow<AppInfo?> = _autoLaunchApp.asStateFlow()
+    
+    private val _autoLaunchEnabled = MutableStateFlow(true)
+    val autoLaunchEnabled: StateFlow<Boolean> = _autoLaunchEnabled.asStateFlow()
+    
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -172,6 +181,13 @@ class AppLauncherViewModel : ViewModel() {
                     val filteredResults = startsWithApps + containsApps
 
                     _filteredApps.value = filteredResults
+                    
+                    // Auto-launch if only one result and auto-launch is enabled
+                    if (filteredResults.size == 1 && _autoLaunchEnabled.value) {
+                        _autoLaunchApp.value = filteredResults.first()
+                    } else {
+                        _autoLaunchApp.value = null
+                    }
                 } catch (e: Exception) {
                     _filteredApps.value = emptyList()
                 }
@@ -185,6 +201,7 @@ class AppLauncherViewModel : ViewModel() {
     fun initializeSettings(context: Context) {
         sharedPrefs = context.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
         loadSavedSwipeApps()
+        loadAutoLaunchSetting()
     }
     
     private fun loadSavedSwipeApps() {
@@ -199,6 +216,15 @@ class AppLauncherViewModel : ViewModel() {
         _rightSwipeApp.value = apps.find { it.packageName == rightPackage }
         _upSwipeApp.value = apps.find { it.packageName == upPackage }
         _downSwipeApp.value = apps.find { it.packageName == downPackage }
+    }
+    
+    private fun loadAutoLaunchSetting() {
+        _autoLaunchEnabled.value = sharedPrefs.getBoolean("auto_launch_enabled", true)
+    }
+    
+    fun setAutoLaunchEnabled(enabled: Boolean) {
+        _autoLaunchEnabled.value = enabled
+        sharedPrefs.edit { putBoolean("auto_launch_enabled", enabled) }
     }
     
     private fun setLeftSwipeApp(app: AppInfo?) {
@@ -454,12 +480,22 @@ fun LauncherApp(viewModel: AppLauncherViewModel) {
 fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val searchText by viewModel.searchText.collectAsState()
     val filteredApps by viewModel.filteredApps.collectAsState()
+    val autoLaunchApp by viewModel.autoLaunchApp.collectAsState()
+    val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     
     var dragStartX by remember { mutableFloatStateOf(0f) }
     var dragStartY by remember { mutableFloatStateOf(0f) }
+    
+    // Auto-launch when only one result
+    LaunchedEffect(autoLaunchApp) {
+        autoLaunchApp?.let { app ->
+            focusManager.clearFocus()
+            viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -541,7 +577,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
-                    if (filteredApps.size == 1) {
+                    if (filteredApps.size == 1 && autoLaunchEnabled) {
                         val app = filteredApps.first()
                         // If we don't clear the focus then the keyboard still shows when the user
                         // returns to the launcher.
@@ -642,6 +678,7 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
     val rightSwipeApp by viewModel.rightSwipeApp.collectAsState()
     val upSwipeApp by viewModel.upSwipeApp.collectAsState()
     val downSwipeApp by viewModel.downSwipeApp.collectAsState()
+    val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val context = LocalContext.current
 
     Column(
@@ -664,12 +701,64 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
         Spacer(modifier = Modifier.height(32.dp))
         
         Text(
-            "Swipe Settings",
+            "Search Settings",
             style = MaterialTheme.typography.headlineMedium,
             color = Color.White
         )
         
         Spacer(modifier = Modifier.height(32.dp))
+        
+        // Auto-launch toggle
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Auto Launch",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Automatically launch apps when search results show only one match",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = autoLaunchEnabled,
+                    onCheckedChange = { viewModel.setAutoLaunchEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
+        
+        Text(
+            "Swipe Settings",
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             "Swipe in any direction on the main screen to launch your selected apps",
