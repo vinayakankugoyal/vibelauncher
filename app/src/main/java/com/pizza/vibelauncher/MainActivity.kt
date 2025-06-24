@@ -560,7 +560,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             placeholder = { Text("Search apps...", color = Color.White.copy(alpha = 0.7f)) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 350.dp) // Fixed distance from top
+                .padding(top = 175.dp) // Fixed distance from top
                 .background(
                     Color.Black.copy(alpha = 0.3f),
                     RoundedCornerShape(25.dp)
@@ -597,7 +597,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 420.dp) // Fixed distance from top (search bar + spacing)
+                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
             ) {
                 if (filteredApps.isEmpty()) {
                     Box(
