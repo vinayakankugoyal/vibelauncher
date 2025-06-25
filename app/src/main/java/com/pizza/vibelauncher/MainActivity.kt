@@ -153,8 +153,7 @@ class AppLauncherViewModel : ViewModel() {
                 allApps.forEach { app ->
                     try {
                         val appNameLower = app.appName.lowercase()
-                        val packageNameLower = app.packageName.lowercase()
-                        
+
                         when {
                             // Apps that start with the query (highest priority)
                             appNameLower.startsWith(searchQuery) -> {
@@ -164,12 +163,8 @@ class AppLauncherViewModel : ViewModel() {
                             appNameLower.contains(searchQuery) -> {
                                 containsApps.add(app)
                             }
-                            // Apps that contain the query in package name (lowest priority)
-                            packageNameLower.contains(searchQuery) -> {
-                                containsApps.add(app)
-                            }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                     }
                 }
                 
