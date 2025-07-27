@@ -49,6 +49,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.systemBars
@@ -480,6 +486,8 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     var dragStartX by remember { mutableFloatStateOf(0f) }
     var dragStartY by remember { mutableFloatStateOf(0f) }
@@ -489,6 +497,19 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         autoLaunchApp?.let { app ->
             focusManager.clearFocus()
             viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+        }
+    }
+    
+    // Request focus on the search field when screen loads or resumes
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                focusRequester.requestFocus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -559,7 +580,8 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 .background(
                     Color.Black.copy(alpha = 0.3f),
                     RoundedCornerShape(25.dp)
-                ),
+                )
+                .focusRequester(focusRequester),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = Color.White,
