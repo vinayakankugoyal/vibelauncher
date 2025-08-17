@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -124,6 +125,9 @@ class AppLauncherViewModel : ViewModel() {
     private val _downSwipeApp = MutableStateFlow<AppInfo?>(null)
     val downSwipeApp: StateFlow<AppInfo?> = _downSwipeApp.asStateFlow()
     
+    private val _longPressApp = MutableStateFlow<AppInfo?>(null)
+    val longPressApp: StateFlow<AppInfo?> = _longPressApp.asStateFlow()
+    
     private val _autoLaunchApp = MutableStateFlow<AppInfo?>(null)
     val autoLaunchApp: StateFlow<AppInfo?> = _autoLaunchApp.asStateFlow()
     
@@ -210,6 +214,7 @@ class AppLauncherViewModel : ViewModel() {
         val rightPackage = sharedPrefs.getString("right_swipe_package", null)
         val upPackage = sharedPrefs.getString("up_swipe_package", null)
         val downPackage = sharedPrefs.getString("down_swipe_package", null)
+        val longPressPackage = sharedPrefs.getString("long_press_package", null)
         
         // Find apps in current app list
         val apps = _allApps.value
@@ -217,6 +222,7 @@ class AppLauncherViewModel : ViewModel() {
         _rightSwipeApp.value = apps.find { it.packageName == rightPackage }
         _upSwipeApp.value = apps.find { it.packageName == upPackage }
         _downSwipeApp.value = apps.find { it.packageName == downPackage }
+        _longPressApp.value = apps.find { it.packageName == longPressPackage }
     }
     
     private fun loadAutoLaunchSetting() {
@@ -246,6 +252,11 @@ class AppLauncherViewModel : ViewModel() {
     private fun setDownSwipeApp(app: AppInfo?) {
         _downSwipeApp.value = app
         sharedPrefs.edit { putString("down_swipe_package", app?.packageName) }
+    }
+    
+    private fun setLongPressApp(app: AppInfo?) {
+        _longPressApp.value = app
+        sharedPrefs.edit { putString("long_press_package", app?.packageName) }
     }
     
     fun showSettings() {
@@ -285,6 +296,11 @@ class AppLauncherViewModel : ViewModel() {
         _showAppPicker.value = true
     }
     
+    fun showAppPickerForLongPress() {
+        _pickingDirection.value = "longpress"
+        _showAppPicker.value = true
+    }
+    
     fun hideAppPicker() {
         _showAppPicker.value = false
     }
@@ -295,6 +311,7 @@ class AppLauncherViewModel : ViewModel() {
             "right" -> setRightSwipeApp(app)
             "up" -> setUpSwipeApp(app)
             "down" -> setDownSwipeApp(app)
+            "longpress" -> setLongPressApp(app)
         }
         hideAppPicker()
     }
@@ -319,6 +336,12 @@ class AppLauncherViewModel : ViewModel() {
     
     fun onSwipeDown(context: Context) {
         _downSwipeApp.value?.let { app ->
+            launchApp(context, app.packageName, app.userHandle)
+        }
+    }
+    
+    fun onLongPress(context: Context) {
+        _longPressApp.value?.let { app ->
             launchApp(context, app.packageName, app.userHandle)
         }
     }
@@ -520,6 +543,13 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = 32.dp)
             .pointerInput(Unit) {
+                detectTapGestures(
+                    onLongPress = {
+                        viewModel.onLongPress(context)
+                    }
+                )
+            }
+            .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         dragStartX = offset.x
@@ -695,6 +725,7 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
     val rightSwipeApp by viewModel.rightSwipeApp.collectAsState()
     val upSwipeApp by viewModel.upSwipeApp.collectAsState()
     val downSwipeApp by viewModel.downSwipeApp.collectAsState()
+    val longPressApp by viewModel.longPressApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val context = LocalContext.current
 
@@ -905,6 +936,53 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
         }
         
         Spacer(modifier = Modifier.height(32.dp))
+        
+        Text(
+            "Long Press Settings",
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            "Long press anywhere on the main screen to launch your selected app",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Long press setting
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "Long Press App",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    longPressApp?.appName ?: "Not set",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.showAppPickerForLongPress() }
+                ) {
+                    Text("Change")
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
 
         Text(
             "Set as Default Launcher",
@@ -972,7 +1050,7 @@ fun AppPickerDialog(viewModel: AppLauncherViewModel) {
                 modifier = Modifier.padding(16.dp)
             ) {
                 Text(
-                    "Select app for $pickingDirection swipe",
+                    if (pickingDirection == "longpress") "Select app for long press" else "Select app for $pickingDirection swipe",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
                     modifier = Modifier.padding(bottom = 16.dp)
