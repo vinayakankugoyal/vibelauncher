@@ -211,18 +211,23 @@ class AppLauncherViewModel : ViewModel() {
     
     private fun loadSavedSwipeApps() {
         val leftPackage = sharedPrefs.getString("left_swipe_package", null)
+        val leftIsWork = sharedPrefs.getBoolean("left_swipe_is_work", false)
         val rightPackage = sharedPrefs.getString("right_swipe_package", null)
+        val rightIsWork = sharedPrefs.getBoolean("right_swipe_is_work", false)
         val upPackage = sharedPrefs.getString("up_swipe_package", null)
+        val upIsWork = sharedPrefs.getBoolean("up_swipe_is_work", false)
         val downPackage = sharedPrefs.getString("down_swipe_package", null)
+        val downIsWork = sharedPrefs.getBoolean("down_swipe_is_work", false)
         val longPressPackage = sharedPrefs.getString("long_press_package", null)
-        
-        // Find apps in current app list
+        val longPressIsWork = sharedPrefs.getBoolean("long_press_is_work", false)
+
+        // Find apps in current app list, matching both package name and work profile status
         val apps = _allApps.value
-        _leftSwipeApp.value = apps.find { it.packageName == leftPackage }
-        _rightSwipeApp.value = apps.find { it.packageName == rightPackage }
-        _upSwipeApp.value = apps.find { it.packageName == upPackage }
-        _downSwipeApp.value = apps.find { it.packageName == downPackage }
-        _longPressApp.value = apps.find { it.packageName == longPressPackage }
+        _leftSwipeApp.value = apps.find { it.packageName == leftPackage && it.isWorkApp == leftIsWork }
+        _rightSwipeApp.value = apps.find { it.packageName == rightPackage && it.isWorkApp == rightIsWork }
+        _upSwipeApp.value = apps.find { it.packageName == upPackage && it.isWorkApp == upIsWork }
+        _downSwipeApp.value = apps.find { it.packageName == downPackage && it.isWorkApp == downIsWork }
+        _longPressApp.value = apps.find { it.packageName == longPressPackage && it.isWorkApp == longPressIsWork }
     }
     
     private fun loadAutoLaunchSetting() {
@@ -236,27 +241,42 @@ class AppLauncherViewModel : ViewModel() {
     
     private fun setLeftSwipeApp(app: AppInfo?) {
         _leftSwipeApp.value = app
-        sharedPrefs.edit { putString("left_swipe_package", app?.packageName) }
+        sharedPrefs.edit {
+            putString("left_swipe_package", app?.packageName)
+            putBoolean("left_swipe_is_work", app?.isWorkApp ?: false)
+        }
     }
     
     private fun setRightSwipeApp(app: AppInfo?) {
         _rightSwipeApp.value = app
-        sharedPrefs.edit { putString("right_swipe_package", app?.packageName) }
+        sharedPrefs.edit {
+            putString("right_swipe_package", app?.packageName)
+            putBoolean("right_swipe_is_work", app?.isWorkApp ?: false)
+        }
     }
     
     private fun setUpSwipeApp(app: AppInfo?) {
         _upSwipeApp.value = app
-        sharedPrefs.edit { putString("up_swipe_package", app?.packageName) }
+        sharedPrefs.edit {
+            putString("up_swipe_package", app?.packageName)
+            putBoolean("up_swipe_is_work", app?.isWorkApp ?: false)
+        }
     }
     
     private fun setDownSwipeApp(app: AppInfo?) {
         _downSwipeApp.value = app
-        sharedPrefs.edit { putString("down_swipe_package", app?.packageName) }
+        sharedPrefs.edit {
+            putString("down_swipe_package", app?.packageName)
+            putBoolean("down_swipe_is_work", app?.isWorkApp ?: false)
+        }
     }
     
     private fun setLongPressApp(app: AppInfo?) {
         _longPressApp.value = app
-        sharedPrefs.edit { putString("long_press_package", app?.packageName) }
+        sharedPrefs.edit {
+            putString("long_press_package", app?.packageName)
+            putBoolean("long_press_is_work", app?.isWorkApp ?: false)
+        }
     }
     
     fun showSettings() {
@@ -832,7 +852,9 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    leftSwipeApp?.appName ?: "Not set",
+                    leftSwipeApp?.let { app ->
+                        if (app.isWorkApp) "${app.appName} (Work)" else app.appName
+                    } ?: "Not set",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
@@ -862,7 +884,9 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    rightSwipeApp?.appName ?: "Not set",
+                    rightSwipeApp?.let { app ->
+                        if (app.isWorkApp) "${app.appName} (Work)" else app.appName
+                    } ?: "Not set",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
@@ -892,7 +916,9 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    upSwipeApp?.appName ?: "Not set",
+                    upSwipeApp?.let { app ->
+                        if (app.isWorkApp) "${app.appName} (Work)" else app.appName
+                    } ?: "Not set",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
@@ -922,7 +948,9 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    downSwipeApp?.appName ?: "Not set",
+                    downSwipeApp?.let { app ->
+                        if (app.isWorkApp) "${app.appName} (Work)" else app.appName
+                    } ?: "Not set",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
@@ -969,7 +997,9 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    longPressApp?.appName ?: "Not set",
+                    longPressApp?.let { app ->
+                        if (app.isWorkApp) "${app.appName} (Work)" else app.appName
+                    } ?: "Not set",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
@@ -1109,7 +1139,7 @@ fun AppPickerItem(app: AppInfo, onClick: () -> Unit) {
         Spacer(modifier = Modifier.width(12.dp))
 
         Text(
-            text = app.appName,
+            text = if (app.isWorkApp) "${app.appName} (Work)" else app.appName,
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White
         )
