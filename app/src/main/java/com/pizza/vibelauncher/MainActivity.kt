@@ -40,6 +40,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
@@ -133,6 +135,21 @@ class AppLauncherViewModel : ViewModel() {
     
     private val _autoLaunchEnabled = MutableStateFlow(true)
     val autoLaunchEnabled: StateFlow<Boolean> = _autoLaunchEnabled.asStateFlow()
+
+    private val _delayedApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val delayedApps: StateFlow<List<AppInfo>> = _delayedApps.asStateFlow()
+
+    private val _isDelayingLaunch = MutableStateFlow(false)
+    val isDelayingLaunch: StateFlow<Boolean> = _isDelayingLaunch.asStateFlow()
+
+    private val _delayTimerSeconds = MutableStateFlow(0)
+    val delayTimerSeconds: StateFlow<Int> = _delayTimerSeconds.asStateFlow()
+
+    private val _pendingLaunchApp = MutableStateFlow<AppInfo?>(null)
+    val pendingLaunchApp: StateFlow<AppInfo?> = _pendingLaunchApp.asStateFlow()
+
+    private val _delayDurationSeconds = MutableStateFlow(60)
+    val delayDurationSeconds: StateFlow<Int> = _delayDurationSeconds.asStateFlow()
     
     private lateinit var sharedPrefs: SharedPreferences
 
@@ -207,6 +224,7 @@ class AppLauncherViewModel : ViewModel() {
         sharedPrefs = context.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
         loadSavedSwipeApps()
         loadAutoLaunchSetting()
+        loadDelayDuration()
     }
     
     private fun loadSavedSwipeApps() {
@@ -233,10 +251,85 @@ class AppLauncherViewModel : ViewModel() {
     private fun loadAutoLaunchSetting() {
         _autoLaunchEnabled.value = sharedPrefs.getBoolean("auto_launch_enabled", true)
     }
+
+    private fun loadDelayDuration() {
+        _delayDurationSeconds.value = sharedPrefs.getInt("delay_duration_seconds", 60)
+    }
     
     fun setAutoLaunchEnabled(enabled: Boolean) {
         _autoLaunchEnabled.value = enabled
         sharedPrefs.edit { putBoolean("auto_launch_enabled", enabled) }
+    }
+
+    fun setDelayDuration(seconds: Int) {
+        _delayDurationSeconds.value = seconds
+        sharedPrefs.edit { putInt("delay_duration_seconds", seconds) }
+    }
+
+    private fun loadDelayedApps() {
+        val delayedPackagesSet = sharedPrefs.getStringSet("delayed_apps_packages", emptySet()) ?: emptySet()
+        val allApps = _allApps.value
+        
+        val delayed = allApps.filter { app ->
+            val key = "${app.packageName}|${app.isWorkApp}"
+            delayedPackagesSet.contains(key)
+        }
+        _delayedApps.value = delayed
+    }
+
+    fun addDelayedApp(app: AppInfo) {
+        val currentList = _delayedApps.value.toMutableList()
+        if (currentList.none { it.packageName == app.packageName && it.userHandle == app.userHandle }) {
+            currentList.add(app)
+            _delayedApps.value = currentList
+            saveDelayedApps()
+        }
+    }
+
+    fun removeDelayedApp(app: AppInfo) {
+        val currentList = _delayedApps.value.toMutableList()
+        val wasRemoved = currentList.removeIf { it.packageName == app.packageName && it.userHandle == app.userHandle }
+        if (wasRemoved) {
+            _delayedApps.value = currentList
+            saveDelayedApps()
+        }
+    }
+
+    private fun saveDelayedApps() {
+        val set = _delayedApps.value.map { "${it.packageName}|${it.isWorkApp}" }.toSet()
+        sharedPrefs.edit { putStringSet("delayed_apps_packages", set) }
+    }
+
+    private var timerJob: kotlinx.coroutines.Job? = null
+
+    private fun startLaunchDelay(app: AppInfo) {
+        _pendingLaunchApp.value = app
+        _delayTimerSeconds.value = _delayDurationSeconds.value
+        _isDelayingLaunch.value = true
+        
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (_delayTimerSeconds.value > 0 && _isDelayingLaunch.value) {
+                kotlinx.coroutines.delay(1000)
+                if (!_isDelayingLaunch.value) return@launch
+                _delayTimerSeconds.value -= 1
+            }
+        }
+    }
+
+    fun cancelLaunchDelay() {
+        _isDelayingLaunch.value = false
+        _pendingLaunchApp.value = null
+        timerJob?.cancel()
+    }
+
+    fun completeDelayedLaunch(context: Context) {
+        val app = _pendingLaunchApp.value
+        if (app != null) {
+            _isDelayingLaunch.value = false
+            launchApp(context, app.packageName, app.userHandle, clearSearch = true, bypassDelay = true)
+            _pendingLaunchApp.value = null
+        }
     }
     
     private fun setLeftSwipeApp(app: AppInfo?) {
@@ -320,6 +413,11 @@ class AppLauncherViewModel : ViewModel() {
         _pickingDirection.value = "longpress"
         _showAppPicker.value = true
     }
+
+    fun showAppPickerForDelayed() {
+        _pickingDirection.value = "delayed"
+        _showAppPicker.value = true
+    }
     
     fun hideAppPicker() {
         _showAppPicker.value = false
@@ -332,6 +430,7 @@ class AppLauncherViewModel : ViewModel() {
             "up" -> setUpSwipeApp(app)
             "down" -> setDownSwipeApp(app)
             "longpress" -> setLongPressApp(app)
+            "delayed" -> addDelayedApp(app)
         }
         hideAppPicker()
     }
@@ -437,6 +536,7 @@ class AppLauncherViewModel : ViewModel() {
 
             _allApps.value = apps
             loadSavedSwipeApps() // Reload swipe apps after loading all apps
+            loadDelayedApps()
             filterApps(_searchText.value)
         }
     }
@@ -446,8 +546,20 @@ class AppLauncherViewModel : ViewModel() {
         filterApps("")
     }
 
-    fun launchApp(context: Context, packageName: String, userHandle: UserHandle? = null, clearSearch: Boolean = false) {
+    fun launchApp(context: Context, packageName: String, userHandle: UserHandle? = null, clearSearch: Boolean = false, bypassDelay: Boolean = false) {
         try {
+            // Check for delayed launch
+            if (!bypassDelay) {
+                val isDelayed = _delayedApps.value.any { it.packageName == packageName && (it.userHandle == userHandle || userHandle == null) }
+                if (isDelayed) {
+                    val app = _allApps.value.find { it.packageName == packageName && (it.userHandle == userHandle || userHandle == null) }
+                    if (app != null) {
+                        startLaunchDelay(app)
+                        return
+                    }
+                }
+            }
+
             if (userHandle != null && userHandle != android.os.Process.myUserHandle()) {
                 // Launch work app using LauncherApps service
                 val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
@@ -506,6 +618,7 @@ class MainActivity : ComponentActivity() {
 fun LauncherApp(viewModel: AppLauncherViewModel) {
     val showSettings by viewModel.showSettings.collectAsState()
     val showAppPicker by viewModel.showAppPicker.collectAsState()
+    val isDelayingLaunch by viewModel.isDelayingLaunch.collectAsState()
     
     // Base screen content
     if (showSettings) {
@@ -517,6 +630,11 @@ fun LauncherApp(viewModel: AppLauncherViewModel) {
     // App picker overlay (renders on top)
     if (showAppPicker) {
         AppPickerDialog(viewModel = viewModel)
+    }
+
+    // Delay timer overlay (highest priority)
+    if (isDelayingLaunch) {
+        DelayTimerScreen(viewModel = viewModel)
     }
 }
 
@@ -819,6 +937,97 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
         }
         
         Spacer(modifier = Modifier.height(32.dp))
+
+        Text(
+            "Delayed Apps",
+            style = MaterialTheme.typography.headlineMedium,
+            color = Color.White
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text(
+            "These apps will show a timer before launching to help reduce usage.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val delayDuration by viewModel.delayDurationSeconds.collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Delay Duration",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "${delayDuration / 60}m ${delayDuration % 60}s",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Slider(
+                    value = delayDuration.toFloat(),
+                    onValueChange = { viewModel.setDelayDuration(it.toInt()) },
+                    valueRange = 5f..120f,
+                    steps = 22,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color.White,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        val delayedApps by viewModel.delayedApps.collectAsState()
+        
+        delayedApps.forEach { app ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (app.isWorkApp) "${app.appName} (Work)" else app.appName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
+                    Button(onClick = { viewModel.removeDelayedApp(app) }) {
+                        Text("Remove")
+                    }
+                }
+            }
+        }
+        
+        Button(
+            onClick = { viewModel.showAppPickerForDelayed() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Add Delayed App")
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
         
         Text(
             "Swipe Settings",
@@ -1080,7 +1289,11 @@ fun AppPickerDialog(viewModel: AppLauncherViewModel) {
                 modifier = Modifier.padding(16.dp)
             ) {
                 Text(
-                    if (pickingDirection == "longpress") "Select app for long press" else "Select app for $pickingDirection swipe",
+                    text = when(pickingDirection) {
+                         "longpress" -> "Select app for long press"
+                         "delayed" -> "Select app to delay"
+                         else -> "Select app for $pickingDirection swipe"
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
                     modifier = Modifier.padding(bottom = 16.dp)
@@ -1143,5 +1356,82 @@ fun AppPickerItem(app: AppInfo, onClick: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White
         )
+    }
+}
+
+@Composable
+fun DelayTimerScreen(viewModel: AppLauncherViewModel) {
+    val remainingSeconds by viewModel.delayTimerSeconds.collectAsState()
+    val pendingApp by viewModel.pendingLaunchApp.collectAsState()
+    val context = LocalContext.current
+    
+    // Auto-complete when timer hits 0
+    LaunchedEffect(remainingSeconds) {
+        if (remainingSeconds == 0) {
+            viewModel.completeDelayedLaunch(context)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.95f))
+            .pointerInput(Unit) {
+                detectTapGestures { /* Block touches */ }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            pendingApp?.let { app ->
+                val imageBitmap = remember(app.icon) {
+                    try {
+                        app.icon.toBitmap().asImageBitmap()
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                imageBitmap?.let {
+                    Image(
+                        bitmap = it,
+                        contentDescription = null,
+                        modifier = Modifier.size(80.dp),
+                         colorFilter = ColorFilter.colorMatrix(
+                            ColorMatrix().apply { setToSaturation(0f) }
+                        )
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Text(
+                    text = "Opening ${app.appName} in...",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Text(
+                text = "$remainingSeconds",
+                style = MaterialTheme.typography.displayLarge,
+                color = Color.White
+            )
+            
+            Spacer(modifier = Modifier.height(48.dp))
+            
+            Button(
+                onClick = { viewModel.cancelLaunchDelay() },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = Color.White.copy(alpha = 0.2f)
+                )
+            ) {
+                Text("Cancel", color = Color.White)
+            }
+        }
     }
 }
