@@ -50,13 +50,6 @@ Go to **Settings** to customize your experience:
 *   **Long Press Settings:** Assign an app to the long-press gesture.
 *   **Default Launcher:** Shortcut to system settings to make Vibe Launcher the default.
 
-## Built With
-
-*   [Kotlin](https://kotlinlang.org/) - First-class and official programming language for Android development.
-*   [Jetpack Compose](https://developer.android.com/jetpack/compose) - Android’s modern toolkit for building native UI.
-*   [Android Architecture Components](https://developer.android.com/topic/libraries/architecture) - ViewModel, Lifecycle, etc.
-*   [Coroutines](https://kotlinlang.org/docs/coroutines-overview.html) - For asynchronous programming.
-
 ## Privacy
 
 Vibe Launcher respects your privacy.
