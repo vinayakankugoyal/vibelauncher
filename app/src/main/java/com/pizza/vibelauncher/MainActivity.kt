@@ -1,5 +1,6 @@
 package com.pizza.vibelauncher
 
+import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -546,6 +547,16 @@ class AppLauncherViewModel : ViewModel() {
         filterApps("")
     }
 
+    fun performWebSearch(context: Context) {
+        val query = _searchText.value.removePrefix(".").trim()
+        if (query.isEmpty()) return
+        val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+            putExtra(SearchManager.QUERY, query)
+        }
+        context.startActivity(intent)
+        clearSearchText()
+    }
+
     fun launchApp(context: Context, packageName: String, userHandle: UserHandle? = null, clearSearch: Boolean = false, bypassDelay: Boolean = false) {
         try {
             // Check for delayed launch
@@ -762,10 +773,11 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
-                    if (filteredApps.size == 1 && autoLaunchEnabled) {
+                    if (searchText.startsWith(".")) {
+                        focusManager.clearFocus()
+                        viewModel.performWebSearch(context)
+                    } else if (filteredApps.size == 1 && autoLaunchEnabled) {
                         val app = filteredApps.first()
-                        // If we don't clear the focus then the keyboard still shows when the user
-                        // returns to the launcher.
                         focusManager.clearFocus()
                         viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
                     }
@@ -784,7 +796,20 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     .fillMaxWidth()
                     .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
             ) {
-                if (filteredApps.isEmpty()) {
+                if (searchText.startsWith(".")) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Press search to open in browser",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                } else if (filteredApps.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
