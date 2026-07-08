@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -70,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -151,7 +153,10 @@ class AppLauncherViewModel : ViewModel() {
 
     private val _delayDurationSeconds = MutableStateFlow(60)
     val delayDurationSeconds: StateFlow<Int> = _delayDurationSeconds.asStateFlow()
-    
+
+    private val _recentApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val recentApps: StateFlow<List<AppInfo>> = _recentApps.asStateFlow()
+
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -299,6 +304,33 @@ class AppLauncherViewModel : ViewModel() {
     private fun saveDelayedApps() {
         val set = _delayedApps.value.map { "${it.packageName}|${it.isWorkApp}" }.toSet()
         sharedPrefs.edit { putStringSet("delayed_apps_packages", set) }
+    }
+
+    private fun loadRecentApps() {
+        // Stored as an ordered comma-separated list, most recent first
+        val stored = sharedPrefs.getString("recent_apps", null) ?: return
+        val keys = stored.split(",").filter { it.isNotBlank() }
+        val apps = _allApps.value
+        _recentApps.value = keys.mapNotNull { key ->
+            apps.find { "${it.packageName}|${it.isWorkApp}" == key }
+        }
+    }
+
+    private fun recordAppLaunch(packageName: String, userHandle: UserHandle?) {
+        try {
+            val app = _allApps.value.find {
+                it.packageName == packageName && (userHandle == null || it.userHandle == userHandle)
+            } ?: return
+            val current = _recentApps.value.toMutableList()
+            current.removeIf { it.packageName == app.packageName && it.isWorkApp == app.isWorkApp }
+            current.add(0, app)
+            val trimmed = current.take(3)
+            _recentApps.value = trimmed
+            sharedPrefs.edit {
+                putString("recent_apps", trimmed.joinToString(",") { "${it.packageName}|${it.isWorkApp}" })
+            }
+        } catch (e: Exception) {
+        }
     }
 
     private var timerJob: kotlinx.coroutines.Job? = null
@@ -538,6 +570,7 @@ class AppLauncherViewModel : ViewModel() {
             _allApps.value = apps
             loadSavedSwipeApps() // Reload swipe apps after loading all apps
             loadDelayedApps()
+            loadRecentApps()
             filterApps(_searchText.value)
         }
     }
@@ -595,7 +628,9 @@ class AppLauncherViewModel : ViewModel() {
                     context.startActivity(intent)
                 }
             }
-            
+
+            recordAppLaunch(packageName, userHandle)
+
             if (clearSearch) {
                 clearSearchText()
             }
@@ -655,14 +690,16 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val filteredApps by viewModel.filteredApps.collectAsState()
     val autoLaunchApp by viewModel.autoLaunchApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
+    val recentApps by viewModel.recentApps.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     val lifecycleOwner = LocalLifecycleOwner.current
-    
+
     var dragStartX by remember { mutableFloatStateOf(0f) }
     var dragStartY by remember { mutableFloatStateOf(0f) }
+    var isSearchFocused by remember { mutableStateOf(false) }
     
     // Auto-launch when only one result
     LaunchedEffect(autoLaunchApp) {
@@ -760,7 +797,8 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     Color.Black.copy(alpha = 0.3f),
                     RoundedCornerShape(25.dp)
                 )
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { isSearchFocused = it.isFocused },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = Color.White,
@@ -828,6 +866,36 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         items(filteredApps.take(5), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
+                            AppListItem(appInfo = appInfo) {
+                                // If we don't clear the focus then the keyboard still shows when the user
+                                // returns to the launcher.
+                                focusManager.clearFocus()
+                                viewModel.launchApp(context, appInfo.packageName, appInfo.userHandle, clearSearch = true)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (isSearchFocused && recentApps.isNotEmpty()) {
+            // Recently opened apps shown when the search box is tapped with no query
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.Black.copy(alpha = 0.85f)
+                ),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
+            ) {
+                Column(modifier = Modifier.padding(4.dp)) {
+                    Text(
+                        "Recent",
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        recentApps.take(3).forEach { appInfo ->
                             AppListItem(appInfo = appInfo) {
                                 // If we don't clear the focus then the keyboard still shows when the user
                                 // returns to the launcher.
