@@ -12,10 +12,26 @@ android {
         applicationId = "com.pizza.vibelauncher"
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.0.11"
+        // CI passes the version derived from the release tag; the fallbacks
+        // are only used for local builds.
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 13
+        versionName = (project.findProperty("appVersionName") as String?) ?: "1.0.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // Signing is configured from the environment so CI can produce signed
+    // bundles; local builds without these variables are unaffected.
+    val releaseKeystorePath = System.getenv("RELEASE_KEYSTORE_PATH")
+    if (releaseKeystorePath != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -26,6 +42,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

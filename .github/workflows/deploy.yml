@@ -1,0 +1,57 @@
+name: Deploy to Play Store
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Only GitHub-official actions are used; the Play upload itself is our
+      # own script (scripts/upload_to_play.py) built on Google's official
+      # client libraries, so no third-party action ever sees credentials.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need tags to compute the version
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Compute version from tag
+        id: version
+        # v1.0.11 -> versionName 1.0.11, versionCode 10011 (major*10000 + minor*100 + patch),
+        # so the code always increases as long as the tag does.
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          VERSION=${TAG#v}
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$((MAJOR * 10000 + MINOR * 100 + PATCH))" >> "$GITHUB_OUTPUT"
+
+      - name: Decode upload keystore
+        run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+
+      - name: Build signed release bundle
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: >
+          ./gradlew bundleRelease
+          -PappVersionCode=${{ steps.version.outputs.code }}
+          -PappVersionName=${{ steps.version.outputs.name }}
+
+      - name: Upload to closed testing
+        env:
+          PLAY_CREDENTIALS: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          pip install --quiet 'google-api-python-client==2.160.0' 'google-auth==2.38.0' 'google-auth-httplib2==0.2.0'
+          printf '%s' "$PLAY_CREDENTIALS" > "$RUNNER_TEMP/play-credentials.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/play-credentials.json"
+          python scripts/upload_to_play.py app/build/outputs/bundle/release/app-release.aab alpha
