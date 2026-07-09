@@ -12,9 +12,11 @@ import android.os.UserManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -596,6 +598,26 @@ class AppLauncherViewModel : ViewModel() {
         filterApps("")
     }
 
+    fun openAppSettings(context: Context, app: AppInfo) {
+        try {
+            val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+            val userHandle = app.userHandle ?: android.os.Process.myUserHandle()
+            val activities = launcherApps.getActivityList(app.packageName, userHandle)
+            if (activities.isNotEmpty()) {
+                // Works for both personal and work profile apps
+                launcherApps.startAppDetailsActivity(activities[0].componentName, userHandle, null, null)
+            } else {
+                val intent = Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", app.packageName, null)
+                )
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
     fun performWebSearch(context: Context) {
         val query = _searchText.value.removePrefix(".").trim()
         if (query.isEmpty()) return
@@ -889,7 +911,14 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         items(filteredApps.take(5), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
-                            AppListItem(appInfo = appInfo) {
+                            AppListItem(
+                                appInfo = appInfo,
+                                onLongClick = {
+                                    focusManager.clearFocus()
+                                    viewModel.openAppSettings(context, appInfo)
+                                    viewModel.clearSearchText()
+                                }
+                            ) {
                                 // If we don't clear the focus then the keyboard still shows when the user
                                 // returns to the launcher.
                                 focusManager.clearFocus()
@@ -917,7 +946,13 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     items(recentApps.take(3), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
-                        AppListItem(appInfo = appInfo) {
+                        AppListItem(
+                            appInfo = appInfo,
+                            onLongClick = {
+                                focusManager.clearFocus()
+                                viewModel.openAppSettings(context, appInfo)
+                            }
+                        ) {
                             // If we don't clear the focus then the keyboard still shows when the user
                             // returns to the launcher.
                             focusManager.clearFocus()
@@ -930,12 +965,13 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AppListItem(appInfo: AppInfo, onClick: () -> Unit) {
+fun AppListItem(appInfo: AppInfo, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
