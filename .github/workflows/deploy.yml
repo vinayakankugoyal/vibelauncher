@@ -1,0 +1,56 @@
+name: Deploy to Play Store
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need tags to compute the version
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compute version from tag
+        id: version
+        # v1.0.11 -> versionName 1.0.11, versionCode 10011 (major*10000 + minor*100 + patch),
+        # so the code always increases as long as the tag does.
+        run: |
+          TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          VERSION=${TAG#v}
+          IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$((MAJOR * 10000 + MINOR * 100 + PATCH))" >> "$GITHUB_OUTPUT"
+
+      - name: Decode upload keystore
+        run: echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+
+      - name: Build signed release bundle
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/upload-keystore.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: >
+          ./gradlew bundleRelease
+          -PappVersionCode=${{ steps.version.outputs.code }}
+          -PappVersionName=${{ steps.version.outputs.name }}
+
+      - name: Upload to closed testing
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.pizza.vibelauncher
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: alpha
+          status: completed
