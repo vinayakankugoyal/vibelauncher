@@ -10,6 +10,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Only GitHub-official actions are used; the Play upload itself is our
+      # own script (scripts/upload_to_play.py) built on Google's official
+      # client libraries, so no third-party action ever sees credentials.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # need tags to compute the version
@@ -18,8 +21,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-
-      - uses: gradle/actions/setup-gradle@v4
 
       - name: Compute version from tag
         id: version
@@ -47,10 +48,10 @@ jobs:
           -PappVersionName=${{ steps.version.outputs.name }}
 
       - name: Upload to closed testing
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.pizza.vibelauncher
-          releaseFiles: app/build/outputs/bundle/release/app-release.aab
-          track: alpha
-          status: completed
+        env:
+          PLAY_CREDENTIALS: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          pip install --quiet 'google-api-python-client==2.160.0' 'google-auth==2.38.0' 'google-auth-httplib2==0.2.0'
+          printf '%s' "$PLAY_CREDENTIALS" > "$RUNNER_TEMP/play-credentials.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/play-credentials.json"
+          python scripts/upload_to_play.py app/build/outputs/bundle/release/app-release.aab alpha
