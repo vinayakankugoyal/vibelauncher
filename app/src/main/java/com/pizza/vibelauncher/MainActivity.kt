@@ -157,6 +157,9 @@ class AppLauncherViewModel : ViewModel() {
     private val _recentApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val recentApps: StateFlow<List<AppInfo>> = _recentApps.asStateFlow()
 
+    private val _recentAppsEnabled = MutableStateFlow(false)
+    val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
+
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -231,6 +234,7 @@ class AppLauncherViewModel : ViewModel() {
         loadSavedSwipeApps()
         loadAutoLaunchSetting()
         loadDelayDuration()
+        loadRecentAppsEnabled()
     }
     
     private fun loadSavedSwipeApps() {
@@ -260,6 +264,15 @@ class AppLauncherViewModel : ViewModel() {
 
     private fun loadDelayDuration() {
         _delayDurationSeconds.value = sharedPrefs.getInt("delay_duration_seconds", 60)
+    }
+
+    private fun loadRecentAppsEnabled() {
+        _recentAppsEnabled.value = sharedPrefs.getBoolean("recent_apps_enabled", false)
+    }
+
+    fun setRecentAppsEnabled(enabled: Boolean) {
+        _recentAppsEnabled.value = enabled
+        sharedPrefs.edit { putBoolean("recent_apps_enabled", enabled) }
     }
     
     fun setAutoLaunchEnabled(enabled: Boolean) {
@@ -318,6 +331,7 @@ class AppLauncherViewModel : ViewModel() {
     }
 
     private fun recordAppLaunch(packageName: String, userHandle: UserHandle?) {
+        if (!_recentAppsEnabled.value) return
         val app = _allApps.value.find {
             it.packageName == packageName && (userHandle == null || it.userHandle == userHandle)
         } ?: return
@@ -332,8 +346,10 @@ class AppLauncherViewModel : ViewModel() {
     }
 
     private var timerJob: kotlinx.coroutines.Job? = null
+    private var pendingLaunchRecordRecent = true
 
-    private fun startLaunchDelay(app: AppInfo) {
+    private fun startLaunchDelay(app: AppInfo, recordRecent: Boolean) {
+        pendingLaunchRecordRecent = recordRecent
         _pendingLaunchApp.value = app
         _delayTimerSeconds.value = _delayDurationSeconds.value
         _isDelayingLaunch.value = true
@@ -358,7 +374,7 @@ class AppLauncherViewModel : ViewModel() {
         val app = _pendingLaunchApp.value
         if (app != null) {
             _isDelayingLaunch.value = false
-            launchApp(context, app.packageName, app.userHandle, clearSearch = true, bypassDelay = true)
+            launchApp(context, app.packageName, app.userHandle, clearSearch = true, bypassDelay = true, recordRecent = pendingLaunchRecordRecent)
             _pendingLaunchApp.value = null
         }
     }
@@ -466,33 +482,35 @@ class AppLauncherViewModel : ViewModel() {
         hideAppPicker()
     }
     
+    // Gesture launches are not recorded as recents - the user already has a
+    // dedicated gesture for these apps.
     fun onSwipeLeft(context: Context) {
         _leftSwipeApp.value?.let { app ->
-            launchApp(context, app.packageName, app.userHandle)
+            launchApp(context, app.packageName, app.userHandle, recordRecent = false)
         }
     }
-    
+
     fun onSwipeRight(context: Context) {
         _rightSwipeApp.value?.let { app ->
-            launchApp(context, app.packageName, app.userHandle)
+            launchApp(context, app.packageName, app.userHandle, recordRecent = false)
         }
     }
-    
+
     fun onSwipeUp(context: Context) {
         _upSwipeApp.value?.let { app ->
-            launchApp(context, app.packageName, app.userHandle)
+            launchApp(context, app.packageName, app.userHandle, recordRecent = false)
         }
     }
-    
+
     fun onSwipeDown(context: Context) {
         _downSwipeApp.value?.let { app ->
-            launchApp(context, app.packageName, app.userHandle)
+            launchApp(context, app.packageName, app.userHandle, recordRecent = false)
         }
     }
-    
+
     fun onLongPress(context: Context) {
         _longPressApp.value?.let { app ->
-            launchApp(context, app.packageName, app.userHandle)
+            launchApp(context, app.packageName, app.userHandle, recordRecent = false)
         }
     }
 
@@ -588,7 +606,7 @@ class AppLauncherViewModel : ViewModel() {
         clearSearchText()
     }
 
-    fun launchApp(context: Context, packageName: String, userHandle: UserHandle? = null, clearSearch: Boolean = false, bypassDelay: Boolean = false) {
+    fun launchApp(context: Context, packageName: String, userHandle: UserHandle? = null, clearSearch: Boolean = false, bypassDelay: Boolean = false, recordRecent: Boolean = true) {
         try {
             // Check for delayed launch
             if (!bypassDelay) {
@@ -596,13 +614,15 @@ class AppLauncherViewModel : ViewModel() {
                 if (isDelayed) {
                     val app = _allApps.value.find { it.packageName == packageName && (it.userHandle == userHandle || userHandle == null) }
                     if (app != null) {
-                        startLaunchDelay(app)
+                        startLaunchDelay(app, recordRecent)
                         return
                     }
                 }
             }
 
-            recordAppLaunch(packageName, userHandle)
+            if (recordRecent) {
+                recordAppLaunch(packageName, userHandle)
+            }
 
             if (userHandle != null && userHandle != android.os.Process.myUserHandle()) {
                 // Launch work app using LauncherApps service
@@ -693,6 +713,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val autoLaunchApp by viewModel.autoLaunchApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
+    val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -881,7 +902,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         }
 
         // Recently used apps - shown when the search box is tapped but nothing typed yet
-        if (searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
+        if (recentAppsEnabled && searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
@@ -955,6 +976,7 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
     val downSwipeApp by viewModel.downSwipeApp.collectAsState()
     val longPressApp by viewModel.longPressApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
+    val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
     val context = LocalContext.current
 
     Column(
@@ -1025,7 +1047,51 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
             }
         }
-        
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Recent apps toggle
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Recent Apps",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Show the 3 most recently used apps when the search bar is tapped",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = recentAppsEnabled,
+                    onCheckedChange = { viewModel.setRecentAppsEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
 
         Text(
