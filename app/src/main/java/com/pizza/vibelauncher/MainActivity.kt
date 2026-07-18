@@ -173,6 +173,9 @@ class AppLauncherViewModel : ViewModel() {
     private val _searchBarPosition = MutableStateFlow("middle")
     val searchBarPosition: StateFlow<String> = _searchBarPosition.asStateFlow()
 
+    private val _autoShowKeyboard = MutableStateFlow(true)
+    val autoShowKeyboard: StateFlow<Boolean> = _autoShowKeyboard.asStateFlow()
+
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -249,6 +252,7 @@ class AppLauncherViewModel : ViewModel() {
         loadDelayDuration()
         loadRecentAppsEnabled()
         loadSearchBarPosition()
+        loadAutoShowKeyboard()
     }
     
     private fun loadSavedSwipeApps() {
@@ -291,6 +295,15 @@ class AppLauncherViewModel : ViewModel() {
     fun setSearchBarPosition(position: String) {
         _searchBarPosition.value = position
         sharedPrefs.edit { putString("search_bar_position", position) }
+    }
+
+    private fun loadAutoShowKeyboard() {
+        _autoShowKeyboard.value = sharedPrefs.getBoolean("auto_show_keyboard", true)
+    }
+
+    fun setAutoShowKeyboard(enabled: Boolean) {
+        _autoShowKeyboard.value = enabled
+        sharedPrefs.edit { putBoolean("auto_show_keyboard", enabled) }
     }
 
     fun setRecentAppsEnabled(enabled: Boolean) {
@@ -765,6 +778,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
     val searchBarPosition by viewModel.searchBarPosition.collectAsState()
+    val autoShowKeyboard by viewModel.autoShowKeyboard.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -783,10 +797,11 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         }
     }
     
-    // Request focus on the search field when screen loads or resumes
+    // Request focus on the search field when screen loads or resumes, which
+    // opens the keyboard - unless the user turned that off
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
+            if (event == Lifecycle.Event.ON_RESUME && autoShowKeyboard) {
                 focusRequester.requestFocus()
             }
         }
@@ -1198,6 +1213,51 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 Switch(
                     checked = recentAppsEnabled,
                     onCheckedChange = { viewModel.setRecentAppsEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Keyboard behavior toggle
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val autoShowKeyboard by viewModel.autoShowKeyboard.collectAsState()
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Show Keyboard on Launch",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Automatically open the keyboard when the launcher appears",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = autoShowKeyboard,
+                    onCheckedChange = { viewModel.setAutoShowKeyboard(it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = Color.White.copy(alpha = 0.5f),
