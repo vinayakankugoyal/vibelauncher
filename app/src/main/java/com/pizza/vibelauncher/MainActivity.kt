@@ -958,8 +958,9 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             }
         }
 
-        // Recently used apps - shown when the search box is tapped but nothing typed yet
-        if (recentAppsEnabled && searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
+        // Recently used apps - shown when the search box is tapped but nothing
+        // typed yet, and only when searching apps
+        if (recentAppsEnabled && searchCategory == "apps" && searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
