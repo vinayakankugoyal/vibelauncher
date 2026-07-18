@@ -15,6 +15,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -63,6 +64,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -98,6 +100,12 @@ data class AppInfo(
     val icon: Drawable,
     val userHandle: UserHandle? = null,
     val isWorkApp: Boolean = false
+)
+
+data class HnStory(
+    val id: Long,
+    val title: String,
+    val url: String?
 )
 
 class AppLauncherViewModel : ViewModel() {
@@ -161,6 +169,14 @@ class AppLauncherViewModel : ViewModel() {
 
     private val _recentAppsEnabled = MutableStateFlow(false)
     val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
+
+    private val _hnEnabled = MutableStateFlow(false)
+    val hnEnabled: StateFlow<Boolean> = _hnEnabled.asStateFlow()
+
+    private val _hnStories = MutableStateFlow<List<HnStory>>(emptyList())
+    val hnStories: StateFlow<List<HnStory>> = _hnStories.asStateFlow()
+
+    private var lastHnFetchMs = 0L
 
     private lateinit var sharedPrefs: SharedPreferences
 
@@ -237,6 +253,7 @@ class AppLauncherViewModel : ViewModel() {
         loadAutoLaunchSetting()
         loadDelayDuration()
         loadRecentAppsEnabled()
+        loadHnEnabled()
     }
     
     private fun loadSavedSwipeApps() {
@@ -275,6 +292,77 @@ class AppLauncherViewModel : ViewModel() {
     fun setRecentAppsEnabled(enabled: Boolean) {
         _recentAppsEnabled.value = enabled
         sharedPrefs.edit { putBoolean("recent_apps_enabled", enabled) }
+    }
+
+    private fun loadHnEnabled() {
+        _hnEnabled.value = sharedPrefs.getBoolean("hn_enabled", false)
+    }
+
+    fun setHnEnabled(enabled: Boolean) {
+        _hnEnabled.value = enabled
+        sharedPrefs.edit { putBoolean("hn_enabled", enabled) }
+        if (enabled) {
+            refreshHackerNews()
+        } else {
+            _hnStories.value = emptyList()
+        }
+    }
+
+    fun refreshHackerNews() {
+        if (!_hnEnabled.value) return
+        // At most one fetch every 15 minutes
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (_hnStories.value.isNotEmpty() && now - lastHnFetchMs < 15 * 60 * 1000) return
+        lastHnFetchMs = now
+        viewModelScope.launch {
+            try {
+                val stories = withContext(Dispatchers.IO) {
+                    val ids = org.json.JSONArray(httpGet("https://hacker-news.firebaseio.com/v0/topstories.json"))
+                    (0 until minOf(3, ids.length())).mapNotNull { i ->
+                        try {
+                            val id = ids.getLong(i)
+                            val item = org.json.JSONObject(httpGet("https://hacker-news.firebaseio.com/v0/item/$id.json"))
+                            HnStory(
+                                id = id,
+                                title = item.getString("title"),
+                                url = item.optString("url").takeIf { it.isNotBlank() }
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }
+                if (stories.isNotEmpty()) {
+                    _hnStories.value = stories
+                }
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    private fun httpGet(url: String): String {
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 5000
+        connection.readTimeout = 5000
+        try {
+            return connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun openHnStory(context: Context, story: HnStory, comments: Boolean = false) {
+        try {
+            val url = if (comments || story.url == null) {
+                "https://news.ycombinator.com/item?id=${story.id}"
+            } else {
+                story.url
+            }
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+        }
     }
     
     fun setAutoLaunchEnabled(enabled: Boolean) {
@@ -728,6 +816,7 @@ fun LauncherApp(viewModel: AppLauncherViewModel) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val searchText by viewModel.searchText.collectAsState()
@@ -736,6 +825,8 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
+    val hnEnabled by viewModel.hnEnabled.collectAsState()
+    val hnStories by viewModel.hnStories.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -759,6 +850,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 focusRequester.requestFocus()
+                viewModel.refreshHackerNews()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -830,6 +922,42 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         ) {
             Text("⚙")
         }
+        // Hacker News top stories - above the search bar, hidden while typing
+        if (hnEnabled && searchText.isEmpty() && hnStories.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 96.dp)
+            ) {
+                Text(
+                    "Y",
+                    color = Color(0xFFFF8A3D),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .border(1.dp, Color(0xFFFF8A3D).copy(alpha = 0.7f), RoundedCornerShape(3.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    hnStories.take(3).forEach { story ->
+                        Text(
+                            text = story.title,
+                            color = Color.White.copy(alpha = 0.92f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { viewModel.openHnStory(context, story) },
+                                    onLongClick = { viewModel.openHnStory(context, story, comments = true) }
+                                )
+                        )
+                    }
+                }
+            }
+        }
+
         // Search bar - absolute position from top
         OutlinedTextField(
             value = searchText,
@@ -1450,6 +1578,51 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 ) {
                     Text("Open Settings")
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Hacker News toggle - intentionally last and without its own section
+        val hnEnabled by viewModel.hnEnabled.collectAsState()
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Hacker News",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Show top stories above the search bar",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = hnEnabled,
+                    onCheckedChange = { viewModel.setHnEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
             }
         }
 
