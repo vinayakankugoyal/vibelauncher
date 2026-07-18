@@ -974,11 +974,15 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         )
                     }
                 } else {
+                    // In bottom mode the list is reversed so the best match sits
+                    // at the bottom, closest to the search bar and the thumb
+                    val displayApps = filteredApps.take(5)
+                        .let { if (searchBarPosition == "bottom") it.reversed() else it }
                     LazyColumn(
                         modifier = Modifier.padding(4.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(filteredApps.take(5), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
+                        items(displayApps, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
                             AppListItem(
                                 appInfo = appInfo,
                                 onLongClick = {
@@ -1008,11 +1012,14 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // Same reversal as search results: most recent closest to the bar
+                val displayRecents = recentApps.take(3)
+                    .let { if (searchBarPosition == "bottom") it.reversed() else it }
                 LazyColumn(
                     modifier = Modifier.padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    items(recentApps.take(3), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
+                    items(displayRecents, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
                         AppListItem(
                             appInfo = appInfo,
                             onLongClick = {
