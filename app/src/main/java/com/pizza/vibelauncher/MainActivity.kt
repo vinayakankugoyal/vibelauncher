@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -167,9 +168,10 @@ class AppLauncherViewModel : ViewModel() {
     private val _recentAppsEnabled = MutableStateFlow(false)
     val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
 
-    // Distance of the search bar from the top of the screen, in dp
-    private val _searchBarOffset = MutableStateFlow(175)
-    val searchBarOffset: StateFlow<Int> = _searchBarOffset.asStateFlow()
+    // "top", "middle" or "bottom". Top and bottom are anchored to the screen
+    // edges; bottom floats above the keyboard.
+    private val _searchBarPosition = MutableStateFlow("middle")
+    val searchBarPosition: StateFlow<String> = _searchBarPosition.asStateFlow()
 
     private lateinit var sharedPrefs: SharedPreferences
 
@@ -246,7 +248,7 @@ class AppLauncherViewModel : ViewModel() {
         loadAutoLaunchSetting()
         loadDelayDuration()
         loadRecentAppsEnabled()
-        loadSearchBarOffset()
+        loadSearchBarPosition()
     }
     
     private fun loadSavedSwipeApps() {
@@ -282,13 +284,13 @@ class AppLauncherViewModel : ViewModel() {
         _recentAppsEnabled.value = sharedPrefs.getBoolean("recent_apps_enabled", false)
     }
 
-    private fun loadSearchBarOffset() {
-        _searchBarOffset.value = sharedPrefs.getInt("search_bar_offset", 175)
+    private fun loadSearchBarPosition() {
+        _searchBarPosition.value = sharedPrefs.getString("search_bar_position", "middle") ?: "middle"
     }
 
-    fun setSearchBarOffset(offset: Int) {
-        _searchBarOffset.value = offset
-        sharedPrefs.edit { putInt("search_bar_offset", offset) }
+    fun setSearchBarPosition(position: String) {
+        _searchBarPosition.value = position
+        sharedPrefs.edit { putString("search_bar_position", position) }
     }
 
     fun setRecentAppsEnabled(enabled: Boolean) {
@@ -762,7 +764,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
-    val searchBarOffset by viewModel.searchBarOffset.collectAsState()
+    val searchBarPosition by viewModel.searchBarPosition.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -848,20 +850,21 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 }
             }
     ) {
-        // Settings button
+        // Settings button - moves to the top when the search bar is at the bottom
         Button(
             onClick = { viewModel.showSettings() },
             modifier = Modifier
-                .align(Alignment.BottomEnd)
+                .align(if (searchBarPosition == "bottom") Alignment.TopEnd else Alignment.BottomEnd)
                 .padding(16.dp)
         ) {
             Text("⚙")
         }
+
         // Search bar - text field on top, category chip below, one rounded container
+        val searchBar: @Composable () -> Unit = {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = searchBarOffset.dp) // User-configurable distance from top
                 .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
                 .border(
                     1.5.dp,
@@ -922,18 +925,18 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 }
             }
         }
-        
-        // Results - absolute position below search bar. Web searches show no
-        // results card; pressing search opens the browser.
+        }
+
+        // Results / recents - flow next to the search bar (below it, or above
+        // it when the bar is at the bottom). Web searches show no results card.
+        val resultsSection: @Composable () -> Unit = {
         if (searchText.isNotEmpty() && searchCategory == "apps") {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = (searchBarOffset + 110).dp) // Below the search bar
+                modifier = Modifier.fillMaxWidth()
             ) {
                 if (filteredApps.isEmpty()) {
                     Box(
@@ -981,9 +984,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = (searchBarOffset + 110).dp) // Below the search bar
+                modifier = Modifier.fillMaxWidth()
             ) {
                 LazyColumn(
                     modifier = Modifier.padding(4.dp),
@@ -1004,6 +1005,34 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         }
                     }
                 }
+            }
+        }
+        }
+
+        Column(
+            modifier = when (searchBarPosition) {
+                "top" -> Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                "bottom" -> Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .imePadding() // slide up with the keyboard
+                    .padding(bottom = 8.dp)
+                else -> Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 175.dp)
+            }
+        ) {
+            if (searchBarPosition == "bottom") {
+                resultsSection()
+                Spacer(modifier = Modifier.height(12.dp))
+                searchBar()
+            } else {
+                searchBar()
+                Spacer(modifier = Modifier.height(12.dp))
+                resultsSection()
             }
         }
     }
@@ -1174,13 +1203,13 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Search bar position slider
+        // Search bar position picker
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                val searchBarOffset by viewModel.searchBarOffset.collectAsState()
+                val searchBarPosition by viewModel.searchBarPosition.collectAsState()
                 Text(
                     "Search Bar Position",
                     style = MaterialTheme.typography.titleMedium,
@@ -1188,21 +1217,31 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "How far the search bar sits from the top of the screen",
+                    "Where the search bar sits on the home screen. Bottom floats above the keyboard.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.7f)
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
-                    value = searchBarOffset.toFloat(),
-                    onValueChange = { viewModel.setSearchBarOffset(it.toInt()) },
-                    valueRange = 60f..450f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color.White,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                    )
-                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("top" to "Top", "middle" to "Middle", "bottom" to "Bottom").forEach { (value, label) ->
+                        val selected = searchBarPosition == value
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (selected) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.5f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .clickable { viewModel.setSearchBarPosition(value) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (selected) Color.Black else Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
             }
         }
 
