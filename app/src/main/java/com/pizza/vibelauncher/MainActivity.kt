@@ -15,7 +15,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -105,7 +104,9 @@ data class AppInfo(
 data class HnStory(
     val id: Long,
     val title: String,
-    val url: String?
+    val url: String?,
+    val score: Int = 0,
+    val commentCount: Int = 0
 )
 
 class AppLauncherViewModel : ViewModel() {
@@ -325,7 +326,9 @@ class AppLauncherViewModel : ViewModel() {
                             HnStory(
                                 id = id,
                                 title = item.getString("title"),
-                                url = item.optString("url").takeIf { it.isNotBlank() }
+                                url = item.optString("url").takeIf { it.isNotBlank() },
+                                score = item.optInt("score", 0),
+                                commentCount = item.optInt("descendants", 0)
                             )
                         } catch (e: Exception) {
                             null
@@ -922,37 +925,52 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         ) {
             Text("⚙")
         }
-        // Hacker News top stories - above the search bar, hidden while typing
+        // Hacker News top stories - card above the search bar, hidden while typing
         if (hnEnabled && searchText.isEmpty() && hnStories.isNotEmpty()) {
-            Row(
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.Black.copy(alpha = 0.85f)
+                ),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 96.dp)
+                    .padding(top = 30.dp)
             ) {
-                Text(
-                    "Y",
-                    color = Color(0xFFFF8A3D),
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier
-                        .border(1.dp, Color(0xFFFF8A3D).copy(alpha = 0.7f), RoundedCornerShape(3.dp))
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    hnStories.take(3).forEach { story ->
-                        Text(
-                            text = story.title,
-                            color = Color.White.copy(alpha = 0.92f),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                Column(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    hnStories.take(3).forEachIndexed { index, story ->
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .combinedClickable(
                                     onClick = { viewModel.openHnStory(context, story) },
                                     onLongClick = { viewModel.openHnStory(context, story, comments = true) }
                                 )
-                        )
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "${index + 1}",
+                                color = Color(0xFFFF8A3D),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.width(16.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = story.title,
+                                    color = Color.White.copy(alpha = 0.95f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${story.score} points · ${story.commentCount} comments",
+                                    color = Color.White.copy(alpha = 0.45f),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
                 }
             }
