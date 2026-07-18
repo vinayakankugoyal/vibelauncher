@@ -81,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.ViewModel
@@ -925,16 +926,22 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         ) {
             Text("⚙")
         }
-        // Hacker News top stories - card above the search bar, hidden while typing
-        if (hnEnabled && searchText.isEmpty() && hnStories.isNotEmpty()) {
+        // Hacker News top stories - always visible while enabled. The card is
+        // bottom-anchored inside the space above the search bar (which starts
+        // at 175.dp), so it can never overlap it regardless of font scale.
+        if (hnEnabled && hnStories.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(167.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 30.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier.padding(vertical = 6.dp),
@@ -964,15 +971,20 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                Text(
-                                    text = "${story.score} points · ${story.commentCount} comments",
-                                    color = Color.White.copy(alpha = 0.45f),
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+                                // At large font scales three rows with meta don't fit
+                                // in the space above the search bar - keep titles only.
+                                if (LocalDensity.current.fontScale <= 1.15f) {
+                                    Text(
+                                        text = "${story.score} points · ${story.commentCount} comments",
+                                        color = Color.White.copy(alpha = 0.45f),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
             }
         }
 
