@@ -167,6 +167,10 @@ class AppLauncherViewModel : ViewModel() {
     private val _recentAppsEnabled = MutableStateFlow(false)
     val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
 
+    // Distance of the search bar from the top of the screen, in dp
+    private val _searchBarOffset = MutableStateFlow(175)
+    val searchBarOffset: StateFlow<Int> = _searchBarOffset.asStateFlow()
+
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -242,6 +246,7 @@ class AppLauncherViewModel : ViewModel() {
         loadAutoLaunchSetting()
         loadDelayDuration()
         loadRecentAppsEnabled()
+        loadSearchBarOffset()
     }
     
     private fun loadSavedSwipeApps() {
@@ -275,6 +280,15 @@ class AppLauncherViewModel : ViewModel() {
 
     private fun loadRecentAppsEnabled() {
         _recentAppsEnabled.value = sharedPrefs.getBoolean("recent_apps_enabled", false)
+    }
+
+    private fun loadSearchBarOffset() {
+        _searchBarOffset.value = sharedPrefs.getInt("search_bar_offset", 175)
+    }
+
+    fun setSearchBarOffset(offset: Int) {
+        _searchBarOffset.value = offset
+        sharedPrefs.edit { putInt("search_bar_offset", offset) }
     }
 
     fun setRecentAppsEnabled(enabled: Boolean) {
@@ -748,6 +762,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
+    val searchBarOffset by viewModel.searchBarOffset.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -846,7 +861,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 175.dp) // Fixed distance from top
+                .padding(top = searchBarOffset.dp) // User-configurable distance from top
                 .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
                 .border(
                     1.5.dp,
@@ -918,7 +933,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 285.dp) // Fixed distance from top (search bar + spacing)
+                    .padding(top = (searchBarOffset + 110).dp) // Below the search bar
             ) {
                 if (filteredApps.isEmpty()) {
                     Box(
@@ -968,7 +983,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 285.dp) // Fixed distance from top (search bar + spacing)
+                    .padding(top = (searchBarOffset + 110).dp) // Below the search bar
             ) {
                 LazyColumn(
                     modifier = Modifier.padding(4.dp),
@@ -1152,6 +1167,40 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                         checkedTrackColor = Color.White.copy(alpha = 0.5f),
                         uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
                         uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Search bar position slider
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val searchBarOffset by viewModel.searchBarOffset.collectAsState()
+                Text(
+                    "Search Bar Position",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "How far the search bar sits from the top of the screen",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Slider(
+                    value = searchBarOffset.toFloat(),
+                    onValueChange = { viewModel.setSearchBarOffset(it.toInt()) },
+                    valueRange = 60f..450f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color.White,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                     )
                 )
             }
