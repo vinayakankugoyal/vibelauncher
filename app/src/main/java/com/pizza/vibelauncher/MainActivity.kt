@@ -901,7 +901,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 ) {
                     Text(
                         text = if (searchCategory == "web") "Web" else "Apps",
-                        color = Color.White.copy(alpha = 0.9f),
+                        color = Color.White,
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
