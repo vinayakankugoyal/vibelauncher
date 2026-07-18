@@ -895,7 +895,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
                         .clickable { viewModel.toggleSearchCategory() }
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 ) {
