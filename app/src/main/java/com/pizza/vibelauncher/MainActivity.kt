@@ -630,7 +630,7 @@ class AppLauncherViewModel : ViewModel() {
     }
 
     fun performWebSearch(context: Context) {
-        val query = _searchText.value.removePrefix(".").trim()
+        val query = _searchText.value.trim()
         if (query.isEmpty()) return
         val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
             putExtra(SearchManager.QUERY, query)
@@ -864,7 +864,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
                     onSearch = {
-                        if (searchCategory == "web" || searchText.startsWith(".")) {
+                        if (searchCategory == "web") {
                             focusManager.clearFocus()
                             viewModel.performWebSearch(context)
                         } else if (filteredApps.size == 1 && autoLaunchEnabled) {
@@ -908,8 +908,9 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             }
         }
         
-        // Results - absolute position below search bar
-        if (searchText.isNotEmpty()) {
+        // Results - absolute position below search bar. Web searches show no
+        // results card; pressing search opens the browser.
+        if (searchText.isNotEmpty() && searchCategory == "apps") {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
@@ -919,20 +920,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     .fillMaxWidth()
                     .padding(top = 285.dp) // Fixed distance from top (search bar + spacing)
             ) {
-                if (searchCategory == "web" || searchText.startsWith(".")) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "Press search to open in browser",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                } else if (filteredApps.isEmpty()) {
+                if (filteredApps.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
