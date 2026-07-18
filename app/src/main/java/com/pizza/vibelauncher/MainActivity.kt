@@ -15,6 +15,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,8 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -49,6 +50,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -104,6 +106,10 @@ class AppLauncherViewModel : ViewModel() {
 
     private val _searchText = MutableStateFlow("")
     val searchText: StateFlow<String> = _searchText.asStateFlow()
+
+    // "apps" or "web" - which category the search bar operates on
+    private val _searchCategory = MutableStateFlow("apps")
+    val searchCategory: StateFlow<String> = _searchCategory.asStateFlow()
 
     private val _allApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val allApps: StateFlow<List<AppInfo>> = _allApps.asStateFlow()
@@ -162,6 +168,14 @@ class AppLauncherViewModel : ViewModel() {
     private val _recentAppsEnabled = MutableStateFlow(false)
     val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
 
+    // "top", "middle" or "bottom". Top and bottom are anchored to the screen
+    // edges; bottom floats above the keyboard.
+    private val _searchBarPosition = MutableStateFlow("middle")
+    val searchBarPosition: StateFlow<String> = _searchBarPosition.asStateFlow()
+
+    private val _autoShowKeyboard = MutableStateFlow(true)
+    val autoShowKeyboard: StateFlow<Boolean> = _autoShowKeyboard.asStateFlow()
+
     private lateinit var sharedPrefs: SharedPreferences
 
     fun onSearchTextChanged(text: String) {
@@ -216,7 +230,7 @@ class AppLauncherViewModel : ViewModel() {
                     _filteredApps.value = filteredResults
                     
                     // Auto-launch if only one result and auto-launch is enabled
-                    if (filteredResults.size == 1 && _autoLaunchEnabled.value) {
+                    if (filteredResults.size == 1 && _autoLaunchEnabled.value && _searchCategory.value == "apps") {
                         _autoLaunchApp.value = filteredResults.first()
                     } else {
                         _autoLaunchApp.value = null
@@ -237,6 +251,8 @@ class AppLauncherViewModel : ViewModel() {
         loadAutoLaunchSetting()
         loadDelayDuration()
         loadRecentAppsEnabled()
+        loadSearchBarPosition()
+        loadAutoShowKeyboard()
     }
     
     private fun loadSavedSwipeApps() {
@@ -270,6 +286,24 @@ class AppLauncherViewModel : ViewModel() {
 
     private fun loadRecentAppsEnabled() {
         _recentAppsEnabled.value = sharedPrefs.getBoolean("recent_apps_enabled", false)
+    }
+
+    private fun loadSearchBarPosition() {
+        _searchBarPosition.value = sharedPrefs.getString("search_bar_position", "middle") ?: "middle"
+    }
+
+    fun setSearchBarPosition(position: String) {
+        _searchBarPosition.value = position
+        sharedPrefs.edit { putString("search_bar_position", position) }
+    }
+
+    private fun loadAutoShowKeyboard() {
+        _autoShowKeyboard.value = sharedPrefs.getBoolean("auto_show_keyboard", true)
+    }
+
+    fun setAutoShowKeyboard(enabled: Boolean) {
+        _autoShowKeyboard.value = enabled
+        sharedPrefs.edit { putBoolean("auto_show_keyboard", enabled) }
     }
 
     fun setRecentAppsEnabled(enabled: Boolean) {
@@ -598,6 +632,12 @@ class AppLauncherViewModel : ViewModel() {
         filterApps("")
     }
 
+    fun toggleSearchCategory() {
+        _searchCategory.value = if (_searchCategory.value == "apps") "web" else "apps"
+        // Re-evaluate auto-launch under the new category
+        filterApps(_searchText.value)
+    }
+
     fun openAppSettings(context: Context, app: AppInfo) {
         try {
             val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
@@ -619,7 +659,7 @@ class AppLauncherViewModel : ViewModel() {
     }
 
     fun performWebSearch(context: Context) {
-        val query = _searchText.value.removePrefix(".").trim()
+        val query = _searchText.value.trim()
         if (query.isEmpty()) return
         val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
             putExtra(SearchManager.QUERY, query)
@@ -731,11 +771,14 @@ fun LauncherApp(viewModel: AppLauncherViewModel) {
 @Composable
 fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val searchText by viewModel.searchText.collectAsState()
+    val searchCategory by viewModel.searchCategory.collectAsState()
     val filteredApps by viewModel.filteredApps.collectAsState()
     val autoLaunchApp by viewModel.autoLaunchApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
+    val searchBarPosition by viewModel.searchBarPosition.collectAsState()
+    val autoShowKeyboard by viewModel.autoShowKeyboard.collectAsState()
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -754,10 +797,11 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         }
     }
     
-    // Request focus on the search field when screen loads or resumes
+    // Request focus on the search field when screen loads or resumes, which
+    // opens the keyboard - unless the user turned that off
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
+            if (event == Lifecycle.Event.ON_RESUME && autoShowKeyboard) {
                 focusRequester.requestFocus()
             }
         }
@@ -821,78 +865,102 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 }
             }
     ) {
-        // Settings button
-        Button(
-            onClick = { viewModel.showSettings() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-        ) {
-            Text("⚙")
-        }
-        // Search bar - absolute position from top
-        OutlinedTextField(
-            value = searchText,
-            onValueChange = { viewModel.onSearchTextChanged(it) },
-            placeholder = { Text("Search apps...", color = Color.White.copy(alpha = 0.7f)) },
+        // Search bar - text field on top, category chip below, one rounded container
+        val searchBar: @Composable () -> Unit = {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 175.dp) // Fixed distance from top
-                .background(
-                    Color.Black.copy(alpha = 0.3f),
-                    RoundedCornerShape(25.dp)
+                .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
+                .border(
+                    1.5.dp,
+                    Color.White.copy(alpha = if (isSearchFocused) 0.5f else 0.3f),
+                    RoundedCornerShape(28.dp)
                 )
-                .focusRequester(focusRequester)
-                .onFocusChanged { isSearchFocused = it.isFocused },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = Color.White.copy(alpha = 0.5f),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                cursorColor = Color.White
-            ),
-            shape = RoundedCornerShape(25.dp),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    if (searchText.startsWith(".")) {
-                        focusManager.clearFocus()
-                        viewModel.performWebSearch(context)
-                    } else if (filteredApps.size == 1 && autoLaunchEnabled) {
-                        val app = filteredApps.first()
-                        focusManager.clearFocus()
-                        viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            BasicTextField(
+                value = searchText,
+                onValueChange = { viewModel.onSearchTextChanged(it) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                cursorBrush = SolidColor(Color.White),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        if (searchCategory == "web") {
+                            focusManager.clearFocus()
+                            viewModel.performWebSearch(context)
+                        } else if (filteredApps.size == 1 && autoLaunchEnabled) {
+                            val app = filteredApps.first()
+                            focusManager.clearFocus()
+                            viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+                        }
                     }
-                }
+                ),
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (searchText.isEmpty()) {
+                            Text(
+                                if (searchCategory == "web") "Search the web..." else "Search apps...",
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { isSearchFocused = it.isFocused }
             )
-        )
-        
-        // Results - absolute position below search bar
-        if (searchText.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
+                        .clickable { viewModel.toggleSearchCategory() }
+                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = if (searchCategory == "web") "Web" else "Apps",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                // Settings - lives inside the bar so it works for every position
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
+                        .clickable { viewModel.showSettings() }
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = "⚙",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+        }
+
+        // Results / recents - flow next to the search bar (below it, or above
+        // it when the bar is at the bottom). Web searches show no results card.
+        val resultsSection: @Composable () -> Unit = {
+        if (searchText.isNotEmpty() && searchCategory == "apps") {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                if (searchText.startsWith(".")) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "Press search to open in browser",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                } else if (filteredApps.isEmpty()) {
+                if (filteredApps.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -906,11 +974,15 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         )
                     }
                 } else {
+                    // In bottom mode the list is reversed so the best match sits
+                    // at the bottom, closest to the search bar and the thumb
+                    val displayApps = filteredApps.take(5)
+                        .let { if (searchBarPosition == "bottom") it.reversed() else it }
                     LazyColumn(
                         modifier = Modifier.padding(4.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(filteredApps.take(5), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
+                        items(displayApps, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
                             AppListItem(
                                 appInfo = appInfo,
                                 onLongClick = {
@@ -930,22 +1002,24 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
             }
         }
 
-        // Recently used apps - shown when the search box is tapped but nothing typed yet
-        if (recentAppsEnabled && searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
+        // Recently used apps - shown when the search box is tapped but nothing
+        // typed yet, and only when searching apps
+        if (recentAppsEnabled && searchCategory == "apps" && searchText.isEmpty() && isSearchFocused && recentApps.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
+                modifier = Modifier.fillMaxWidth()
             ) {
+                // Same reversal as search results: most recent closest to the bar
+                val displayRecents = recentApps.take(3)
+                    .let { if (searchBarPosition == "bottom") it.reversed() else it }
                 LazyColumn(
                     modifier = Modifier.padding(4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    items(recentApps.take(3), key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
+                    items(displayRecents, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { appInfo ->
                         AppListItem(
                             appInfo = appInfo,
                             onLongClick = {
@@ -960,6 +1034,34 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                         }
                     }
                 }
+            }
+        }
+        }
+
+        Column(
+            modifier = when (searchBarPosition) {
+                "top" -> Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                "bottom" -> Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .imePadding() // slide up with the keyboard
+                    .padding(bottom = 8.dp)
+                else -> Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 175.dp)
+            }
+        ) {
+            if (searchBarPosition == "bottom") {
+                resultsSection()
+                Spacer(modifier = Modifier.height(12.dp))
+                searchBar()
+            } else {
+                searchBar()
+                Spacer(modifier = Modifier.height(12.dp))
+                resultsSection()
             }
         }
     }
@@ -1125,6 +1227,95 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                         uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
                     )
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Keyboard behavior toggle
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val autoShowKeyboard by viewModel.autoShowKeyboard.collectAsState()
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Show Keyboard on Launch",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Automatically open the keyboard when the launcher appears",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = autoShowKeyboard,
+                    onCheckedChange = { viewModel.setAutoShowKeyboard(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Search bar position picker
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val searchBarPosition by viewModel.searchBarPosition.collectAsState()
+                Text(
+                    "Search Bar Position",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Where the search bar sits on the home screen. Bottom floats above the keyboard.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("top" to "Top", "middle" to "Middle", "bottom" to "Bottom").forEach { (value, label) ->
+                        val selected = searchBarPosition == value
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (selected) Color.White.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.5f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .clickable { viewModel.setSearchBarPosition(value) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (selected) Color.Black else Color.White,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
             }
         }
 

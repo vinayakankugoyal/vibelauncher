@@ -20,6 +20,7 @@
             android:label="@string/app_name"
             android:theme="@android:style/Theme.Wallpaper.NoTitleBar"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:clearTaskOnLaunch="true"
             android:stateNotNeeded="true">
             <intent-filter android:priority="1000">
