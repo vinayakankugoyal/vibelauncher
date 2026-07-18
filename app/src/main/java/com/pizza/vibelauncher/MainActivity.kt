@@ -850,16 +850,6 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 }
             }
     ) {
-        // Settings button - moves to the top when the search bar is at the bottom
-        Button(
-            onClick = { viewModel.showSettings() },
-            modifier = Modifier
-                .align(if (searchBarPosition == "bottom") Alignment.TopEnd else Alignment.BottomEnd)
-                .padding(16.dp)
-        ) {
-            Text("⚙")
-        }
-
         // Search bar - text field on top, category chip below, one rounded container
         val searchBar: @Composable () -> Unit = {
         Column(
@@ -910,7 +900,10 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                     .onFocusChanged { isSearchFocused = it.isFocused }
             )
             Spacer(modifier = Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
                         .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
@@ -919,6 +912,20 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 ) {
                     Text(
                         text = if (searchCategory == "web") "Web" else "Apps",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                // Settings - lives inside the bar so it works for every position
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(999.dp))
+                        .clickable { viewModel.showSettings() }
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = "⚙",
                         color = Color.White,
                         style = MaterialTheme.typography.labelMedium
                     )
