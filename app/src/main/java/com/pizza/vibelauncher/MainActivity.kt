@@ -15,6 +15,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,8 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -49,6 +49,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.abs
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -104,6 +105,10 @@ class AppLauncherViewModel : ViewModel() {
 
     private val _searchText = MutableStateFlow("")
     val searchText: StateFlow<String> = _searchText.asStateFlow()
+
+    // "apps" or "web" - which category the search bar operates on
+    private val _searchCategory = MutableStateFlow("apps")
+    val searchCategory: StateFlow<String> = _searchCategory.asStateFlow()
 
     private val _allApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val allApps: StateFlow<List<AppInfo>> = _allApps.asStateFlow()
@@ -216,7 +221,7 @@ class AppLauncherViewModel : ViewModel() {
                     _filteredApps.value = filteredResults
                     
                     // Auto-launch if only one result and auto-launch is enabled
-                    if (filteredResults.size == 1 && _autoLaunchEnabled.value) {
+                    if (filteredResults.size == 1 && _autoLaunchEnabled.value && _searchCategory.value == "apps") {
                         _autoLaunchApp.value = filteredResults.first()
                     } else {
                         _autoLaunchApp.value = null
@@ -598,6 +603,12 @@ class AppLauncherViewModel : ViewModel() {
         filterApps("")
     }
 
+    fun toggleSearchCategory() {
+        _searchCategory.value = if (_searchCategory.value == "apps") "web" else "apps"
+        // Re-evaluate auto-launch under the new category
+        filterApps(_searchText.value)
+    }
+
     fun openAppSettings(context: Context, app: AppInfo) {
         try {
             val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
@@ -731,6 +742,7 @@ fun LauncherApp(viewModel: AppLauncherViewModel) {
 @Composable
 fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val searchText by viewModel.searchText.collectAsState()
+    val searchCategory by viewModel.searchCategory.collectAsState()
     val filteredApps by viewModel.filteredApps.collectAsState()
     val autoLaunchApp by viewModel.autoLaunchApp.collectAsState()
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
@@ -830,43 +842,71 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
         ) {
             Text("⚙")
         }
-        // Search bar - absolute position from top
-        OutlinedTextField(
-            value = searchText,
-            onValueChange = { viewModel.onSearchTextChanged(it) },
-            placeholder = { Text("Search apps...", color = Color.White.copy(alpha = 0.7f)) },
+        // Search bar - text field on top, category chip below, one rounded container
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 175.dp) // Fixed distance from top
-                .background(
-                    Color.Black.copy(alpha = 0.3f),
-                    RoundedCornerShape(25.dp)
+                .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(28.dp))
+                .border(
+                    1.5.dp,
+                    Color.White.copy(alpha = if (isSearchFocused) 0.5f else 0.3f),
+                    RoundedCornerShape(28.dp)
                 )
-                .focusRequester(focusRequester)
-                .onFocusChanged { isSearchFocused = it.isFocused },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = Color.White.copy(alpha = 0.5f),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                cursorColor = Color.White
-            ),
-            shape = RoundedCornerShape(25.dp),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    if (searchText.startsWith(".")) {
-                        focusManager.clearFocus()
-                        viewModel.performWebSearch(context)
-                    } else if (filteredApps.size == 1 && autoLaunchEnabled) {
-                        val app = filteredApps.first()
-                        focusManager.clearFocus()
-                        viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+        ) {
+            BasicTextField(
+                value = searchText,
+                onValueChange = { viewModel.onSearchTextChanged(it) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                cursorBrush = SolidColor(Color.White),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        if (searchCategory == "web" || searchText.startsWith(".")) {
+                            focusManager.clearFocus()
+                            viewModel.performWebSearch(context)
+                        } else if (filteredApps.size == 1 && autoLaunchEnabled) {
+                            val app = filteredApps.first()
+                            focusManager.clearFocus()
+                            viewModel.launchApp(context, app.packageName, app.userHandle, clearSearch = true)
+                        }
                     }
-                }
+                ),
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (searchText.isEmpty()) {
+                            Text(
+                                if (searchCategory == "web") "Search the web..." else "Search apps...",
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { isSearchFocused = it.isFocused }
             )
-        )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                        .clickable { viewModel.toggleSearchCategory() }
+                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = if (searchCategory == "web") "Web" else "Apps",
+                        color = Color.White.copy(alpha = 0.9f),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
         
         // Results - absolute position below search bar
         if (searchText.isNotEmpty()) {
@@ -877,9 +917,9 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
+                    .padding(top = 285.dp) // Fixed distance from top (search bar + spacing)
             ) {
-                if (searchText.startsWith(".")) {
+                if (searchCategory == "web" || searchText.startsWith(".")) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -939,7 +979,7 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 240.dp) // Fixed distance from top (search bar + spacing)
+                    .padding(top = 285.dp) // Fixed distance from top (search bar + spacing)
             ) {
                 LazyColumn(
                     modifier = Modifier.padding(4.dp),
