@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.pizza.vibelauncher"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.pizza.vibelauncher"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         // CI passes the version derived from the release tag; the fallbacks
         // are only used for local builds.
         versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 13
