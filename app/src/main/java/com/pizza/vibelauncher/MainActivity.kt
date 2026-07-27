@@ -1651,7 +1651,15 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
 fun AppPickerDialog(viewModel: AppLauncherViewModel) {
     val allApps by viewModel.allApps.collectAsState()
     val pickingDirection by viewModel.pickingDirection.collectAsState()
-    
+    var pickerQuery by remember { mutableStateOf("") }
+
+    // The list keeps its alphabetical order; the query just narrows it
+    val shownApps = remember(allApps, pickerQuery) {
+        val query = pickerQuery.trim().lowercase()
+        if (query.isEmpty()) allApps
+        else allApps.filter { it.appName.lowercase().contains(query) }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1681,18 +1689,54 @@ fun AppPickerDialog(viewModel: AppLauncherViewModel) {
                     color = Color.White,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
-                
-                LazyColumn {
-                    items(allApps, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { app ->
+
+                BasicTextField(
+                    value = pickerQuery,
+                    onValueChange = { pickerQuery = it },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                    cursorBrush = SolidColor(Color.White),
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (pickerQuery.isEmpty()) {
+                                Text(
+                                    "Search apps...",
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(shownApps, key = { "${it.packageName}_${it.userHandle?.hashCode() ?: 0}" }) { app ->
                         AppPickerItem(
                             app = app,
                             onClick = { viewModel.selectAppFromPicker(app) }
                         )
                     }
+                    if (shownApps.isEmpty()) {
+                        item {
+                            Text(
+                                "No apps found",
+                                color = Color.White.copy(alpha = 0.6f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(vertical = 16.dp)
+                            )
+                        }
+                    }
                 }
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 Button(
                     onClick = { viewModel.hideAppPicker() },
                     modifier = Modifier.align(Alignment.CenterHorizontally)
