@@ -550,6 +550,46 @@ class AppLauncherViewModel : ViewModel() {
         }
     }
 
+    private var launcherAppsCallback: LauncherApps.Callback? = null
+    private var appContext: Context? = null
+
+    // Reload the app list in the background whenever a package is installed,
+    // removed or updated (covers work profile apps too).
+    fun startListeningForAppChanges(context: Context) {
+        if (launcherAppsCallback != null) return
+        val app = context.applicationContext
+        appContext = app
+        val launcherApps = app.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+        val callback = object : LauncherApps.Callback() {
+            override fun onPackageAdded(packageName: String?, user: UserHandle?) = reload()
+            override fun onPackageRemoved(packageName: String?, user: UserHandle?) = reload()
+            override fun onPackageChanged(packageName: String?, user: UserHandle?) = reload()
+            override fun onPackagesAvailable(packageNames: Array<out String>?, user: UserHandle?, replacing: Boolean) = reload()
+            override fun onPackagesUnavailable(packageNames: Array<out String>?, user: UserHandle?, replacing: Boolean) = reload()
+
+            private fun reload() {
+                appContext?.let { loadInstalledApps(it) }
+            }
+        }
+        try {
+            launcherApps.registerCallback(callback, android.os.Handler(android.os.Looper.getMainLooper()))
+            launcherAppsCallback = callback
+        } catch (e: Exception) {
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            launcherAppsCallback?.let { callback ->
+                (appContext?.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps)
+                    ?.unregisterCallback(callback)
+            }
+        } catch (e: Exception) {
+        }
+        launcherAppsCallback = null
+    }
+
     fun loadInstalledApps(context: Context) {
         viewModelScope.launch {
             val packageManager = context.packageManager
@@ -736,6 +776,7 @@ class MainActivity : ComponentActivity() {
         
         viewModel.initializeSettings(applicationContext)
         viewModel.loadInstalledApps(applicationContext)
+        viewModel.startListeningForAppChanges(applicationContext)
 
         setContent {
             LauncherApp(viewModel = viewModel)
