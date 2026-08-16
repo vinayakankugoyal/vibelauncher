@@ -410,8 +410,129 @@ class AppLauncherViewModel : ViewModel() {
         val app = _pendingLaunchApp.value
         if (app != null) {
             _isDelayingLaunch.value = false
+            // Let the app stay usable for a while before the switcher monitor
+            // blocks it again
+            delayUnlockedUntil[app.packageName] = System.currentTimeMillis() + UNLOCK_WINDOW_MS
             launchApp(context, app.packageName, app.userHandle, clearSearch = true, bypassDelay = true, recordRecent = pendingLaunchRecordRecent)
             _pendingLaunchApp.value = null
+        }
+    }
+
+    // How long a delayed app stays usable after completing the countdown
+    // before switching to it triggers the delay again
+    private val delayUnlockedUntil = mutableMapOf<String, Long>()
+    private var foregroundMonitorJob: kotlinx.coroutines.Job? = null
+
+    fun hasUsageAccess(context: Context): Boolean {
+        return try {
+            val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29) {
+                appOps.unsafeCheckOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), context.packageName
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                appOps.checkOpNoThrow(
+                    android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), context.packageName
+                )
+            }
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun hasOverlayPermission(context: Context): Boolean {
+        return try {
+            android.provider.Settings.canDrawOverlays(context)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun openUsageAccessSettings(context: Context) {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+        }
+    }
+
+    fun openOverlaySettings(context: Context) {
+        try {
+            val intent = Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.fromParts("package", context.packageName, null)
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+        }
+    }
+
+    // Watches foreground app changes so a delayed app opened from the recents
+    // switcher (instead of through this launcher) still gets the delay screen.
+    // Needs usage access; work profile apps can't be observed this way.
+    fun startForegroundMonitor(context: Context) {
+        if (foregroundMonitorJob != null) return
+        val app = context.applicationContext
+        foregroundMonitorJob = viewModelScope.launch(Dispatchers.Default) {
+            var lastCheck = System.currentTimeMillis()
+            while (true) {
+                try {
+                    val delayedPackages = _delayedApps.value
+                        .filter { !it.isWorkApp }
+                        .map { it.packageName }
+                        .toSet()
+                    if (delayedPackages.isEmpty() || _isDelayingLaunch.value || !hasUsageAccess(app)) {
+                        lastCheck = System.currentTimeMillis()
+                    } else {
+                        val now = System.currentTimeMillis()
+                        val usageStats = app.getSystemService(Context.USAGE_STATS_SERVICE)
+                            as android.app.usage.UsageStatsManager
+                        val events = usageStats.queryEvents(lastCheck, now)
+                        lastCheck = now
+                        var blockedPackage: String? = null
+                        val event = android.app.usage.UsageEvents.Event()
+                        while (events.hasNextEvent()) {
+                            events.getNextEvent(event)
+                            val cameToForeground =
+                                event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                                (android.os.Build.VERSION.SDK_INT >= 29 &&
+                                    event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED)
+                            if (cameToForeground && event.packageName in delayedPackages) {
+                                val allowedUntil = delayUnlockedUntil[event.packageName] ?: 0L
+                                if (now > allowedUntil) {
+                                    blockedPackage = event.packageName
+                                }
+                            }
+                        }
+                        blockedPackage?.let { packageName ->
+                            withContext(Dispatchers.Main) {
+                                interceptForegroundApp(app, packageName)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    private fun interceptForegroundApp(context: Context, packageName: String) {
+        val appInfo = _allApps.value.find { it.packageName == packageName && !it.isWorkApp } ?: return
+        startLaunchDelay(appInfo, recordRecent = true)
+        // Bring the launcher in front of the blocked app so the delay screen
+        // shows; needs the overlay permission on Android 10+
+        try {
+            val intent = Intent(context, MainActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            context.startActivity(intent)
+        } catch (e: Exception) {
         }
     }
     
@@ -760,6 +881,7 @@ class AppLauncherViewModel : ViewModel() {
 
     companion object {
         private const val MAX_RECENT_APPS = 3
+        private const val UNLOCK_WINDOW_MS = 10 * 60 * 1000L
     }
 }
 
@@ -777,6 +899,7 @@ class MainActivity : ComponentActivity() {
         viewModel.initializeSettings(applicationContext)
         viewModel.loadInstalledApps(applicationContext)
         viewModel.startListeningForAppChanges(applicationContext)
+        viewModel.startForegroundMonitor(applicationContext)
 
         setContent {
             LauncherApp(viewModel = viewModel)
@@ -1449,6 +1572,93 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Add Delayed App")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Block app switching - re-check the permissions whenever the user
+        // comes back from the system settings screens
+        run {
+            val lifecycleOwner = LocalLifecycleOwner.current
+            var permissionRefresh by remember { mutableStateOf(0) }
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        permissionRefresh++
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+            val hasUsageAccess = remember(permissionRefresh) { viewModel.hasUsageAccess(context) }
+            val hasOverlay = remember(permissionRefresh) { viewModel.hasOverlayPermission(context) }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Block App Switching",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Also show the delay when a delayed app is opened from the recent apps switcher. Requires two permissions, granted in system settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Usage access",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                        if (hasUsageAccess) {
+                            Text(
+                                "Granted",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        } else {
+                            Button(onClick = { viewModel.openUsageAccessSettings(context) }) {
+                                Text("Grant")
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Display over other apps",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                        if (hasOverlay) {
+                            Text(
+                                "Granted",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        } else {
+                            Button(onClick = { viewModel.openOverlaySettings(context) }) {
+                                Text("Grant")
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         Spacer(modifier = Modifier.height(32.dp))
