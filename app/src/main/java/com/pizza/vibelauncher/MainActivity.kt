@@ -168,6 +168,12 @@ class AppLauncherViewModel : ViewModel() {
     private val _recentAppsEnabled = MutableStateFlow(false)
     val recentAppsEnabled: StateFlow<Boolean> = _recentAppsEnabled.asStateFlow()
 
+    private val _frequentApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val frequentApps: StateFlow<List<AppInfo>> = _frequentApps.asStateFlow()
+
+    private val _frequentAppsEnabled = MutableStateFlow(false)
+    val frequentAppsEnabled: StateFlow<Boolean> = _frequentAppsEnabled.asStateFlow()
+
     // "top", "middle" or "bottom". Top and bottom are anchored to the screen
     // edges; bottom floats above the keyboard.
     private val _searchBarPosition = MutableStateFlow("middle")
@@ -251,6 +257,7 @@ class AppLauncherViewModel : ViewModel() {
         loadAutoLaunchSetting()
         loadDelayDuration()
         loadRecentAppsEnabled()
+        loadFrequentAppsEnabled()
         loadSearchBarPosition()
         loadAutoShowKeyboard()
     }
@@ -366,11 +373,54 @@ class AppLauncherViewModel : ViewModel() {
         }
     }
 
+    // Launch counts keyed by "package|isWorkApp", persisted as "key=count,..."
+    private val launchCounts = mutableMapOf<String, Int>()
+
+    private fun loadFrequentAppsEnabled() {
+        _frequentAppsEnabled.value = sharedPrefs.getBoolean("frequent_apps_enabled", false)
+    }
+
+    fun setFrequentAppsEnabled(enabled: Boolean) {
+        _frequentAppsEnabled.value = enabled
+        sharedPrefs.edit { putBoolean("frequent_apps_enabled", enabled) }
+    }
+
+    private fun loadLaunchCounts() {
+        launchCounts.clear()
+        sharedPrefs.getString("launch_counts", null)
+            ?.split(",")
+            ?.forEach { entry ->
+                val key = entry.substringBeforeLast("=", "")
+                val count = entry.substringAfterLast("=", "").toIntOrNull()
+                if (key.isNotEmpty() && count != null) launchCounts[key] = count
+            }
+        updateFrequentApps()
+    }
+
+    private fun updateFrequentApps() {
+        val apps = _allApps.value
+        _frequentApps.value = launchCounts.entries
+            .sortedByDescending { it.value }
+            .mapNotNull { (key, _) -> apps.find { "${it.packageName}|${it.isWorkApp}" == key } }
+            .take(MAX_FREQUENT_APPS)
+    }
+
     private fun recordAppLaunch(packageName: String, userHandle: UserHandle?) {
-        if (!_recentAppsEnabled.value) return
+        if (!_recentAppsEnabled.value && !_frequentAppsEnabled.value) return
         val app = _allApps.value.find {
             it.packageName == packageName && (userHandle == null || it.userHandle == userHandle)
         } ?: return
+
+        if (_frequentAppsEnabled.value) {
+            val key = "${app.packageName}|${app.isWorkApp}"
+            launchCounts[key] = (launchCounts[key] ?: 0) + 1
+            sharedPrefs.edit {
+                putString("launch_counts", launchCounts.entries.joinToString(",") { "${it.key}=${it.value}" })
+            }
+            updateFrequentApps()
+        }
+
+        if (!_recentAppsEnabled.value) return
         val current = _recentApps.value.toMutableList()
         current.removeIf { it.packageName == app.packageName && it.isWorkApp == app.isWorkApp }
         current.add(0, app)
@@ -663,6 +713,7 @@ class AppLauncherViewModel : ViewModel() {
             loadSavedSwipeApps() // Reload swipe apps after loading all apps
             loadDelayedApps()
             loadRecentApps()
+            loadLaunchCounts()
             filterApps(_searchText.value)
         }
     }
@@ -760,6 +811,7 @@ class AppLauncherViewModel : ViewModel() {
 
     companion object {
         private const val MAX_RECENT_APPS = 3
+        private const val MAX_FREQUENT_APPS = 6
     }
 }
 
@@ -818,6 +870,8 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
     val autoLaunchEnabled by viewModel.autoLaunchEnabled.collectAsState()
     val recentApps by viewModel.recentApps.collectAsState()
     val recentAppsEnabled by viewModel.recentAppsEnabled.collectAsState()
+    val frequentApps by viewModel.frequentApps.collectAsState()
+    val frequentAppsEnabled by viewModel.frequentAppsEnabled.collectAsState()
     val searchBarPosition by viewModel.searchBarPosition.collectAsState()
     val autoShowKeyboard by viewModel.autoShowKeyboard.collectAsState()
     val context = LocalContext.current
@@ -919,6 +973,29 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
                 )
                 .padding(horizontal = 18.dp, vertical = 14.dp)
         ) {
+            // Most frequently launched apps, one tap away. Hidden while typing
+            // and in web mode so it never competes with results.
+            if (frequentAppsEnabled && frequentApps.isNotEmpty() && searchText.isEmpty() && searchCategory == "apps") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    frequentApps.forEach { appInfo ->
+                        FrequentAppIcon(
+                            appInfo = appInfo,
+                            onClick = {
+                                focusManager.clearFocus()
+                                viewModel.launchApp(context, appInfo.packageName, appInfo.userHandle, clearSearch = true)
+                            },
+                            onLongClick = {
+                                focusManager.clearFocus()
+                                viewModel.openAppSettings(context, appInfo)
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             BasicTextField(
                 value = searchText,
                 onValueChange = { viewModel.onSearchTextChanged(it) },
@@ -1110,6 +1187,31 @@ fun AppLauncherScreen(viewModel: AppLauncherViewModel) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+fun FrequentAppIcon(appInfo: AppInfo, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val imageBitmap = remember(appInfo.icon) {
+        try {
+            appInfo.icon.toBitmap().asImageBitmap()
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val modifier = Modifier
+        .size(32.dp)
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    imageBitmap?.let {
+        Image(
+            bitmap = it,
+            contentDescription = appInfo.appName,
+            modifier = modifier,
+            colorFilter = ColorFilter.colorMatrix(
+                ColorMatrix().apply { setToSaturation(0f) }
+            )
+        )
+    } ?: Box(modifier)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun AppListItem(appInfo: AppInfo, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     Row(
         modifier = Modifier
@@ -1261,6 +1363,51 @@ fun SettingsScreen(viewModel: AppLauncherViewModel) {
                 Switch(
                     checked = recentAppsEnabled,
                     onCheckedChange = { viewModel.setRecentAppsEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.White.copy(alpha = 0.5f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Frequent apps toggle
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.7f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val frequentAppsEnabled by viewModel.frequentAppsEnabled.collectAsState()
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        "Frequent Apps",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Show your most launched apps as icons in the search bar",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                }
+                Switch(
+                    checked = frequentAppsEnabled,
+                    onCheckedChange = { viewModel.setFrequentAppsEnabled(it) },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
                         checkedTrackColor = Color.White.copy(alpha = 0.5f),
