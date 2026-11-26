@@ -7,7 +7,7 @@ Vibe Launcher is a minimalist, productivity-focused Android launcher designed to
 *   **Minimalist Design:** clean, transparent interface with grayscale app icons to reduce visual clutter and dopamine triggers.
 *   **Smart Search:** Quickly find and launch apps, with a category chip on the search bar to switch between **Apps** and **Web** search.
 *   **Auto Launch:** (Optional) Automatically launches the app when your search narrows down to a single result.
-*   **Recent Apps:** (Optional) Shows your 3 most recently used apps when you tap the search bar, before you type anything.
+*   **Frequent Apps:** (Optional) Shows your most launched apps as a row of icons in the search bar, one tap away.
 *   **Customizable Search Bar:** Place the search bar at the top, middle, or bottom of the screen — at the bottom it floats above the keyboard and results stack upward so the best match is closest to your thumb. You can also choose whether the keyboard opens automatically when the launcher appears.
 *   **Gesture Shortcuts:** Customize swipes (Left, Right, Up, Down) and Long Press actions to instantly launch your favorite apps.
 *   **Digital Wellbeing / Focus Mode:**
@@ -36,7 +36,7 @@ Vibe Launcher is a minimalist, productivity-focused Android launcher designed to
 ### Home Screen
 *   **Search:** Type in the search bar to find apps. Tap the category chip (**Apps** / **Web**) below the text field to switch what you're searching.
 *   **Launch:** Tap an app from the search results to open it.
-*   **App Info:** Long-press an app in the results (or recents) to open its system App Info page.
+*   **App Info:** Long-press an app in the results (or a frequent-app icon) to open its system App Info page.
 *   **Web Search:** With the chip set to **Web**, press the search key to open your query in the browser.
 *   **Settings:** Tap the gear icon (⚙) on the right side of the search bar.
 
@@ -47,7 +47,7 @@ Vibe Launcher is a minimalist, productivity-focused Android launcher designed to
 ### Configuration
 Go to **Settings** to customize your experience:
 *   **Auto Launch:** Toggle auto-launch on/off.
-*   **Recent Apps:** Show your most recently used apps when the search bar is tapped.
+*   **Frequent Apps:** Show your most launched apps as icons in the search bar.
 *   **Show Keyboard on Launch:** Choose whether the keyboard opens automatically when the launcher appears.
 *   **Search Bar Position:** Top, Middle, or Bottom.
 *   **Delayed Apps:** 
